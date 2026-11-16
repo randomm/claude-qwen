@@ -62,7 +62,8 @@ if grep -qxF -- '--append-system-prompt-file' "$tmp/argv" && \
    grep -qxF "$conf/SYSTEM-PROMPT.md" "$tmp/argv"; then st=0; else st=1; fi
 t "launch: --append-system-prompt-file with CONFDIR path" 0 $st
 
-# 3. qlaude-always-wins: all 10 exports reach the child env.
+# 3. qlaude-always-wins: all 10 exports reach the child env WITH THEIR
+# VALUES (review finding: name-presence alone let wrong values through).
 _missing=''
 for _v in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL \
     ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
@@ -73,12 +74,25 @@ for _v in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL \
 done
 if [ -z "$_missing" ]; then st=0; else st=1; fi
 t "launch: full export set in child env" 0 $st
-grep -q '^ANTHROPIC_AUTH_TOKEN=launch-token-9f2e$' "$tmp/env"
-t "launch: token exported as ANTHROPIC_AUTH_TOKEN (bearer)" 0 $?
-grep -q '^ANTHROPIC_MODEL=my-model$' "$tmp/env"
-t "launch: model exported" 0 $?
-grep -q '^CLAUDE_CODE_EFFORT_LEVEL=medium$' "$tmp/env"
-t "launch: effort default exported" 0 $?
+for _exp in \
+    'ANTHROPIC_BASE_URL=https://models.example.com' \
+    'ANTHROPIC_AUTH_TOKEN=launch-token-9f2e' \
+    'ANTHROPIC_MODEL=my-model' \
+    'ANTHROPIC_DEFAULT_OPUS_MODEL=my-model' \
+    'ANTHROPIC_DEFAULT_SONNET_MODEL=my-model' \
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL=my-model' \
+    'CLAUDE_CODE_AUTO_MODE_MODEL=my-model' \
+    'CLAUDE_CODE_BG_CLASSIFIER_MODEL=my-model' \
+    'CLAUDE_CODE_EFFORT_LEVEL=medium' \
+    'CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144'; do
+    if ! grep -qxF "$_exp" "$tmp/env"; then
+        echo "  export value mismatch: $_exp" >&2
+        st=1
+        break
+    fi
+    st=0
+done
+t "launch: every contract export carries its spec value" 0 $st
 
 # 4. Shadowing beats inherited values.
 env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
@@ -126,10 +140,11 @@ if grep -q '^CLAUDE_CODE_AUTO_MODE_SERVER=' "$tmp/env"; then st=1; else st=0; fi
 t "AUTO_MODE_SERVER=0: unset for the child" 0 $st
 
 # 8. Missing SYSTEM-PROMPT.md: one-line note, launch continues (never dies).
+# Review finding: st must capture the GREP status — the command
+# substitution's $? is the trailing restore-mv and proves nothing.
 out=$(mv "$conf/SYSTEM-PROMPT.md" "$tmp/sp.bak" 2>/dev/null; \
     run_q 2>&1; mv "$tmp/sp.bak" "$conf/SYSTEM-PROMPT.md")
-st=$?
-printf '%s\n' "$out" | grep -qi 'SYSTEM-PROMPT'
+if printf '%s\n' "$out" | grep -qi 'SYSTEM-PROMPT'; then st=0; else st=1; fi
 t "no system prompt: note printed" 0 $st
 if grep -qxF -- '--append-system-prompt-file' "$tmp/argv"; then st=1; else st=0; fi
 t "no system prompt: launched without the append flag" 0 $st
@@ -152,9 +167,17 @@ t "api-key auth: ANTHROPIC_API_KEY exported" 0 $?
 if grep -q '^ANTHROPIC_AUTH_TOKEN=' "$tmp/env3"; then st=1; else st=0; fi
 t "api-key auth: bearer var unset for the child (even inherited)" 0 $st
 
-# 10. Token never in claude's argv (A4/C6 on the launch path).
-if grep -qF 'launch-token-9f2e' "$tmp/argv" 2>/dev/null; then st=1; else st=0; fi
-t "launch: token absent from claude argv" 0 $st
+# 10. Token never in claude's argv, on BOTH auth styles (review finding:
+# grepping only the bearer run's argv left the api-key path untested).
+# Anti-vacuous: both argv files must exist and be non-empty first.
+if [ -s "$tmp/argv" ] && [ -s "$tmp/argv3" ] && \
+    ! grep -qF 'launch-token-9f2e' "$tmp/argv" && \
+    ! grep -qF 'launch-token-9f2e' "$tmp/argv3"; then
+    st=0
+else
+    st=1
+fi
+t "launch: token absent from claude argv (bearer and api-key runs)" 0 $st
 
 # 11. qlaude config reports a pre-set ANTHROPIC_MODEL as shadowed, never
 # printing the token (plan T3; spec §5.3 + A4).
@@ -240,5 +263,19 @@ t "abs_exec: absolute value passed through" 0 $st
 if sh -c '. "$1" 2>/dev/null; abs_exec sub/nope' qlaude-scratch "$tool" \
     >/dev/null 2>&1; then st=1; else st=0; fi
 t "abs_exec: missing slash-relative target refused" 0 $st
+
+# 17. Source pins for the two binding launcher mechanics (review finding):
+# claude must be reached via exec (spec §5.3.4 'exec'd') on BOTH branches,
+# and only ever through abs_exec's resolved path (C4). Runtime cannot
+# distinguish exec from a plain call on a stand-in, so pin the code.
+# shellcheck disable=SC2016  # grep patterns are literal source snippets
+_body=$(sed -n '/^cmd_launch()/,/^}/p' "$tool")
+# shellcheck disable=SC2016  # grep pattern is a literal source snippet
+if printf '%s\n' "$_body" | grep -q 'exec "$_abs" --append-system-prompt-file' && \
+    printf '%s\n' "$_body" | grep -q 'exec "$_abs" "$@"'; then st=0; else st=1; fi
+t "cmd_launch execs claude on both branches" 0 $st
+# shellcheck disable=SC2016  # grep pattern is a literal source snippet
+if printf '%s\n' "$_body" | grep -q '_abs=$(abs_exec'; then st=0; else st=1; fi
+t "cmd_launch resolves the bin only via abs_exec" 0 $st
 
 exit "$fail"
