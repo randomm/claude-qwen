@@ -31,7 +31,7 @@ jobs:
           [ -n "$_names" ] || { echo 'A6: QLAUDE_EXPORTS constant not found' >&2; exit 1; }
           _missing=0
           for _n in $_names; do
-            grep -q "$_n" README.md || {
+            grep -q -- "$_n" README.md || {
               echo "A6: launcher exports $_n but README does not document it" >&2
               _missing=1; }
           done

@@ -281,7 +281,10 @@ except ChildProcessError:
 }
 if command -v python3 >/dev/null 2>&1; then
     for _ch in sh dash; do
-        [ "$_ch" = dash ] && ! command -v dash >/dev/null 2>&1 && continue
+        if [ "$_ch" = dash ] && ! command -v dash >/dev/null 2>&1; then
+            echo "SKIP sequential echo test (dash child: dash missing)"
+            continue
+        fi
         _pty_seq env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/seq_$_ch" QLAUDE_INSTALL_DIR="$tmp/bin" \
             "$_ch" "$tool" setup >"$tmp/seq_$_ch.out" 2>&1

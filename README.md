@@ -31,8 +31,11 @@ qlaude              # launches claude with the Setup exports + SYSTEM-PROMPT.md
 qlaude ensure-path  # optional: add qlaude to PATH in new terminals
 ```
 
-- The installer verifies a sha256 checksum of everything it fetches
-  against `install.sha256` before executing it.
+- The installer verifies a sha256 checksum of every file it fetches
+  against `install.sha256` before executing anything — drift and
+  corruption protection. It is not first-run authentication: the
+  manifest arrives over the same HTTPS channel as the payloads (spec
+  §5.6, honest scope).
 - The token is never echoed, never printed, never passed in command-line
   arguments; `qlaude config` and `qlaude doctor` show state, not the
   value.
