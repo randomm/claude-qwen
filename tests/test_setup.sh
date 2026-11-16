@@ -116,4 +116,32 @@ st=$?
 if [ "$st" -eq 1 ] && printf '%s\n' "$out" | grep -qi 'usage'; then st=0; else st=1; fi
 t "unknown flag: usage + exit 1" 0 $st
 
+# 9. Terminal escape injection (security review): a hostile endpoint's
+# model ids are SERVER-CONTROLLED — the discovered-models line must not
+# carry raw ESC/CR/LF into the terminal. A dedicated shim answers the
+# models request with an id containing ESC[31m, without touching the stub.
+mkdir -p "$tmp/hostileshim"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SHIM_LOG"' '_in=$(cat)' \
+    "case \$_in in *'/v1/models'*) printf '{\"data\":[{\"id\":\"esc\033[31mX\"}]}200'; exit 0;; esac" \
+    "printf '%s' \"\$_in\" | exec $real_curl \"\$@\"" >"$tmp/hostileshim/curl"
+chmod +x "$tmp/hostileshim/curl"
+# token arrives via --token-stdin BEFORE the probe (spec order) — without
+# it setup exits at the token gate and the print path never runs.
+# The endpoint also arrives hostile (ESC inside QLAUDE_ENDPOINT env): both
+# server-controlled id text and the echoed endpoint must be sanitized.
+_esc_host=$(printf 'http://hostile\033[31m.invalid')
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | \
+    env -i PATH="$tmp/bin:$tmp/hostileshim:/usr/bin:/bin" HOME="$tmp" \
+    QLAUDE_CONFIG_DIR="$tmp/hconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+    SHIM_LOG="$tmp/hostile.argv" QLAUDE_ENDPOINT="$_esc_host" \
+    sh "$tool" setup -y --token-stdin \
+    2>&1)
+if printf '%s' "$out" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
+t "hostile model id: no raw escape byte reaches the terminal" 0 $st
+# anti-vacuous: the probe did print (sanitized), so the assertion above
+# tested a real print path, not a skipped probe.
+if printf '%s\n' "$out" | grep -q 'discovered models'; then st=0; else st=1; fi
+t "hostile model id: discovery line was printed (path exercised)" 0 $st
+
 exit "$fail"
