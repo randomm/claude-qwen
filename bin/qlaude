@@ -19,16 +19,10 @@ EXIT_CLI=4
 # shellcheck disable=SC2034  # spec §5.5 step-3 exit (tool-probe failures)
 EXIT_TOOL=5
 # --- output discipline (C9): stderr only; NO_COLOR honoured on PRESENCE
-if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then
-    C_ERR=''
-else
-    C_ERR=$(printf '\033[31m')
-fi
+if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_ERR=''; else C_ERR=$(printf '\033[31m'); fi
 C_RESET=''
 [ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
-err() {
-    printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2
-}
+err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
 usage() {
     cat <<'USAGE'
 usage: qlaude [command] [args...]
@@ -96,10 +90,7 @@ config_parse() {
     if [ -z "${QLAUDE_TOKEN:-}" ]; then QLAUDE_TOKEN=$_tk; fi
     case $QLAUDE_AUTH in
         '' | bearer | api-key) ;;
-        *)
-            err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"
-            return "$EXIT_USAGE"
-            ;;
+        *) err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"; return "$EXIT_USAGE" ;;
     esac
     QLAUDE_AUTH=${QLAUDE_AUTH:-bearer}
     QLAUDE_CONTEXT_TOKENS=${QLAUDE_CONTEXT_TOKENS:-262144}
@@ -120,12 +111,38 @@ config_parse() {
     fi
     return 0
 }
-# dispatch placeholder for bodies not yet built (T6).
-not_implemented() {
-    err "'$1' is not available in this build yet — see the qlaude issue tracker for its task"
-    return "$EXIT_PREREQ"
+# ensure-path (§5.7): one marker-delimited block in the user's rc file,
+# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else
+# Darwin → ~/.zprofile, Linux → ~/.profile. Appends only; a marker block
+# whose body is not ours verbatim is foreign: refuse, never touch.
+cmd_ensure_path() {
+    _dry=''
+    case ${1:-} in
+        '') ;;
+        --dry-run) _dry=1 ;;
+        *) err "usage: qlaude ensure-path [--dry-run]"; return "$EXIT_USAGE" ;;
+    esac
+    if [ "$(basename "${SHELL:-sh}")" = zsh ] || [ "$(uname)" = Darwin ]; then
+        _f="$HOME/.zprofile"
+    else
+        _f="$HOME/.profile"
+    fi
+    _exp="export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
+    if [ -f "$_f" ] && grep -q '^# qlaude PATH$' "$_f"; then
+        if grep -qxF "$_exp" "$_f"; then
+            err "ensure-path: already configured in $_f"
+            return 0
+        fi
+        err "refusing: the '# qlaude PATH' block in $_f was not written by qlaude — edit it yourself"
+        return 1
+    fi
+    if [ -n "$_dry" ]; then
+        printf 'would append to %s:\n%s\n%s\n%s\n' "$_f" '# qlaude PATH' "$_exp" '# end qlaude PATH' >&2
+        return 0
+    fi
+    printf '\n%s\n%s\n%s\n' '# qlaude PATH' "$_exp" '# end qlaude PATH' >>"$_f"
+    err "PATH updated in $_f — open a new terminal to pick it up"
 }
-cmd_ensure_path() { not_implemented ensure-path; }
 # --- wizard (§5.4)
 usage_setup() {
     cat <<'USAGE'
@@ -208,7 +225,8 @@ step2_claude() {
         gline PASS 2 claude "echoed OK"; return 0
     fi
     gline FAIL 2 claude "claude -p did not echo OK — its verbatim output follows"
-    printf '%s\n' "$_o" >&2
+    # verbatim but sanitized: keep lines/tabs, strip ESC + other control bytes
+    printf '%s\n' "$_o" | LC_ALL=C tr -cd '\040-\176\n\t' >&2
     return "$EXIT_CLI"
 }
 step3_tools() {
@@ -268,21 +286,18 @@ _probe_claude() {
         exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" --max-turns "$2"
     ) 2>&1
 }
-gauntlet() {
-    _G_TOK=$(token_resolve) || _G_TOK=''
-    step0_prereq || return $?
-    step1_messages || return $?
-    step2_claude || return $?
-    step3_tools || return $?
-    step4_info
-}
 run_gauntlet() {
     if [ ! -f "$QLAUDE_CONFDIR_RESOLVED/config.env" ]; then
         err "no config at $QLAUDE_CONFDIR_RESOLVED/config.env — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
     config_parse "$QLAUDE_CONFDIR_RESOLVED/config.env" || return "$EXIT_USAGE"
-    gauntlet
+    _G_TOK=$(token_resolve) || _G_TOK=''
+    step0_prereq || return $?
+    step1_messages || return $?
+    step2_claude || return $?
+    step3_tools || return $?
+    step4_info
 }
 cmd_doctor() { run_gauntlet; }
 # probe_models <endpoint> <token> — GET /v1/models WITH auth (stdin config,
@@ -299,10 +314,8 @@ EOF
         *200)
             # tolerant of whitespace around ':'; ids are SERVER-CONTROLLED —
             # filtered to printable ASCII before display (no escape injection).
-            printf '%s\n' "${_pout%200}" | \
-                grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
-                sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | \
-                LC_ALL=C tr -cd '\040-\176'
+            printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
         *) return 1 ;;
     esac
@@ -441,46 +454,31 @@ cmd_setup() {
 QLAUDE_EXPORTS='ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS'
 # abs_exec — absolute executable path; CWD-relative slash values absolutized.
 abs_exec() {
-    _c=$1
-    case $_c in
-        */*)
-            if [ ! -x "$_c" ]; then
-                return 1
-            fi
-            case $_c in
-                /*) printf '%s\n' "$_c" ;;
-                *)
-                    _d=$(cd "${_c%/*}" 2>/dev/null && pwd) || return 1
-                    printf '%s/%s\n' "$_d" "${_c##*/}"
-                    ;;
-            esac
-            ;;
-        *) command -v "$_c" ;;
+    case $1 in
+        */*) ;;
+        *) command -v "$1"; return ;;
+    esac
+    [ -x "$1" ] || return 1
+    case $1 in
+        /*) printf '%s\n' "$1" ;;
+        *) _d=$(cd "${1%/*}" 2>/dev/null && pwd) || return 1; printf '%s/%s\n' "$_d" "${1##*/}" ;;
     esac
 }
 # token_resolve — C6 ladder (§5.3 step 2): macOS keychain FIRST (stdout read,
 token_resolve() {
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _t=$(security find-generic-password -s qlaude -w 2>/dev/null) || _t=''
-        if [ -n "$_t" ]; then
-            printf '%s' "$_t"
-            return 0
-        fi
+        if [ -n "$_t" ]; then printf '%s' "$_t"; return 0; fi
     fi
-    if [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf '%s' "$QLAUDE_TOKEN"
-        return 0
-    fi
+    if [ -n "${QLAUDE_TOKEN:-}" ]; then printf '%s' "$QLAUDE_TOKEN"; return 0; fi
     return 1
 }
 token_source() { # label only — never the value (A4)
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1 && \
         security find-generic-password -s qlaude -w >/dev/null 2>&1; then
         printf 'keychain'
-    elif [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf 'file-or-env'
-    else
-        printf 'unset'
+    elif [ -n "${QLAUDE_TOKEN:-}" ]; then printf 'file-or-env'
+    else printf 'unset'
     fi
 }
 cmd_launch() {
@@ -555,11 +553,13 @@ cmd_config() {
     if ! config_parse "$_cf"; then
         return 1
     fi
-    printf 'CONFDIR=%s\nINSTALLDIR=%s\nendpoint=%s\nmodel=%s\nauth=%s\ncontext=%s\neffort=%s\nclaude_bin=%s\ntoken=%s\n' \
+    _cb_res=${QLAUDE_CLAUDE_BIN:-claude}
+    _cv=$("$_cb_res" --version 2>/dev/null | head -1)
+    printf 'CONFDIR=%s\nINSTALLDIR=%s\nendpoint=%s\nmodel=%s\nauth=%s\ncontext=%s\neffort=%s\nclaude_bin=%s\nclaude_version=%s\ntoken=%s\n' \
         "$QLAUDE_CONFDIR_RESOLVED" "$QLAUDE_INSTALLDIR_RESOLVED" \
         "$QLAUDE_ENDPOINT" "$QLAUDE_MODEL" "$QLAUDE_AUTH" \
         "$QLAUDE_CONTEXT_TOKENS" "$QLAUDE_EFFORT" \
-        "${QLAUDE_CLAUDE_BIN:-claude}" "$(token_source)"
+        "$_cb_res" "$_cv" "$(token_source)"
     for _n in $QLAUDE_EXPORTS; do
         if [ -n "$(printenv "$_n")" ]; then
             printf 'shadowed-inherited=%s\n' "$_n"
@@ -570,18 +570,12 @@ main() {
     _cmd=${1:-}
     case $_cmd in
         '') cmd_launch "$@" ;;
-        launch)
-            shift
-            cmd_launch "$@"
-            ;;
+        launch) shift; cmd_launch "$@" ;;
         --) cmd_launch "$@" ;;
-        setup)
-            shift
-            cmd_setup "$@"
-            ;;
+        setup) shift; cmd_setup "$@" ;;
         doctor) cmd_doctor ;;
         config) cmd_config ;;
-        ensure-path) cmd_ensure_path ;;
+        ensure-path) shift; cmd_ensure_path "$@" ;;
         --version | -V) printf 'qlaude %s\n' "$QLAUDE_VERSION" ;;
         --help | -h | help) usage ;;
         *)

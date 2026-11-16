@@ -243,6 +243,7 @@ cat >"$tmp/failbin/claude" <<'SHIM3'
 #!/bin/sh
 [ "$1" = --version ] && exit 0
 echo "qlaude-test-login-fail-7z: not authenticated" >&2
+printf 'hostile\033[31mred\n' >&2
 exit 1
 SHIM3
 chmod +x "$tmp/failbin/claude"
@@ -262,6 +263,13 @@ fi
 t "step 2 fail: claude's error text surfaced verbatim" 0 $st
 if printf '%s\n' "$out" | grep -q '^PASS 2'; then st=1; else st=0; fi
 t "step 2 fail: no false PASS 2 (anti-vacuous)" 0 $st
+# verbatim ≠ unfiltered: server-influenced claude output must not smuggle
+# raw ESC/CR into the terminal (same doctrine as probe_models). The text
+# must still reach the user (anti-vacuous pair to the escape assertion).
+if printf '%s' "$out" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
+t "step 2 fail: control bytes stripped from the verbatim dump" 0 $st
+if printf '%s\n' "$out" | grep -qF 'hostile'; then st=0; else st=1; fi
+t "step 2 fail: printable text still surfaced (anti-vacuous)" 0 $st
 
 # 10e (review, plan T5 Review-Focus): every gauntlet curl carries -m.
 QLAUDE_STUB=1 run_doc >/dev/null 2>&1
