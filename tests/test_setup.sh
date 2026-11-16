@@ -25,9 +25,16 @@ base="http://127.0.0.1:$QLAUDE_STUB_PORT"
 tmp=$(mktemp -d) || { echo "setup test: mktemp -d failed" >&2; exit 2; }
 trap 'rm -rf "$tmp"' EXIT
 
-# stand-in claude so the presence check passes; a curl shim logs argv
+# stand-in claude: answers --version and the gauntlet's -p probes (the
+# setup tail runs the real gauntlet since T5); a curl shim logs argv
 mkdir -p "$tmp/bin"
-printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/claude"
+cat >"$tmp/bin/claude" <<'SHIM'
+#!/bin/sh
+case "$*" in
+    *QLAUDE_TOOL_OK*) echo "QLAUDE_TOOL_OK" ;;
+    *) echo "OK"
+esac
+SHIM
 chmod +x "$tmp/bin/claude"
 real_curl=$(command -v curl)
 mkdir -p "$tmp/curlshim"
@@ -38,6 +45,8 @@ chmod +x "$tmp/curlshim/curl"
 
 wconf="$tmp/wconf"
 mkdir -p "$wconf"
+# gauntlet step 0 requires a non-empty SYSTEM-PROMPT.md in CONFDIR
+printf 'appended prompt body\n' >"$wconf/SYSTEM-PROMPT.md"
 
 run_setup() { # isolated env; curl shim on PATH records every curl argv
     env -i PATH="$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
