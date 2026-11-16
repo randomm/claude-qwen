@@ -41,14 +41,15 @@ jobs:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    # ONE config dir for installer + setup + doctor: SYSTEM-PROMPT.md is
-    # installed into QLAUDE_CONFIG_DIR, and doctor's step 0 requires it
-    # there (job-level env — step-level would let the installer and the
-    # doctor disagree, which is exactly what broke the first CI run).
-    env:
-      QLAUDE_CONFIG_DIR: ${{ runner.temp }}/conf
     steps:
       - uses: actions/checkout@v4
+      - name: one config dir for installer + setup + doctor
+        # SYSTEM-PROMPT.md is installed into QLAUDE_CONFIG_DIR and doctor's
+        # step 0 requires it there — installer and doctor must never
+        # disagree (that disagreement broke the first CI run). Exported
+        # once here ($GITHUB_ENV reaches every later step); the runner
+        # context is not legal in job-level env, hence this form.
+        run: echo "QLAUDE_CONFIG_DIR=$RUNNER_TEMP/conf" >> "$GITHUB_ENV"
       - name: install claude code (official channel, pinned version)
         run: npm install -g @anthropic-ai/claude-code@2.1.325
       - name: pin line — version actually installed + help contract
