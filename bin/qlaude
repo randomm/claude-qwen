@@ -9,7 +9,6 @@ QLAUDE_VERSION=0.0.1
 QLAUDE_INSTALLDIR_RESOLVED=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
 # shellcheck disable=SC2034
 QLAUDE_CONFDIR_RESOLVED=${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}
-# --- exit codes (spec §5.5 gauntlet table).
 EXIT_USAGE=1
 EXIT_PREREQ=2
 # shellcheck disable=SC2034  # spec §5.5 step-1 exit (auth failures)
@@ -125,9 +124,8 @@ config_parse() {
     return 0
 }
 # ensure-path (§5.7): one marker-delimited block in the user's rc file,
-# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else
-# Darwin → ~/.zprofile, Linux → ~/.profile. Appends only; a marker block
-# whose body is not ours verbatim is foreign: refuse, never touch.
+# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else Darwin →
+# ~/.zprofile, Linux → ~/.profile. Append-only; foreign marker block = refuse.
 cmd_ensure_path() {
     _dry=''
     case ${1:-} in
@@ -160,15 +158,14 @@ cmd_ensure_path() {
     fi
     err "PATH updated in $_f — open a new terminal to pick it up"
 }
-# --- wizard (§5.4)
-usage_setup() {
+usage_setup() { # wizard usage (§5.4)
     cat <<'USAGE'
 usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
                     [--effort E] [--claude-bin P] [--token-stdin]
 USAGE
 }
-# --- gauntlet (§5.5): ordered, stop on first hard fail (0-3); one status
-# line per step on stderr; exit per table; NO set -e here (rule).
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
+# stderr; exit per table; NO set -e here (rule).
 gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
 step0_prereq() {
     case $(uname) in
@@ -276,11 +273,8 @@ step4_info() {
     return 0
 }
 # _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5
-# C7 + security review): fresh HOME AND CWD (no user dotfiles or project
-# .claude/settings.json/.mcp.json/CLAUDE.md), inherited ANTHROPIC_*/
-# CLAUDE_CODE_* scrubbed, token exported into only this child (C6's one
-# exception), bin absolute. Residual: runs as this user, bounded by the
-# --allowedTools prefix rule — the spec-mandated probe is not a sandbox.
+# C7): fresh HOME+CWD, ANTHROPIC_*/CLAUDE_CODE_* scrubbed, token into only
+# this child (C6's exception), abs bin. It runs as this user — not a sandbox.
 _probe_claude() {
     _d=$(mktemp -d) || return 1
     (
@@ -436,6 +430,18 @@ cmd_setup() {
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
     fi
+    # C6 §5.4: on macOS the token goes to the Keychain, piped on STDIN (never
+    # argv — G4); a locked/odd keychain notes + degrades to the 0600 file.
+    _kc=0
+    if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
+        _u=${USER:-$(id -un 2>/dev/null)}
+        if printf '%s' "$_tok" | security add-generic-password \
+            -U -a "${_u:-qlaude}" -s qlaude -w 2>/dev/null; then
+            _kc=1; err "token stored in the macOS Keychain (service qlaude)"
+        else
+            err "keychain write failed (locked?) — falling back to the 0600 file"
+        fi
+    fi
     _t="$_cf.tmp.$$"
     : >"$_t" || return "$EXIT_PREREQ"
     chmod 600 "$_t"
@@ -446,7 +452,7 @@ cmd_setup() {
         printf 'QLAUDE_CONTEXT_TOKENS=%s\n' "$_ct"
         printf 'QLAUDE_EFFORT=%s\n' "$_ef"
         printf 'QLAUDE_CLAUDE_BIN=%s\n' "$_cb"
-        printf 'QLAUDE_TOKEN=%s\n' "$_tok"
+        [ "$_kc" = 1 ] || printf 'QLAUDE_TOKEN=%s\n' "$_tok"
     } >"$_t" && mv "$_t" "$_cf"; then
         err "saved $_cf (token stored, value not printed)"
     else
@@ -525,18 +531,12 @@ cmd_launch() {
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: the list itself is the assertion target; token value redacted.
-        # Values come from the shell's own parameters — never an external
-        # printenv, whose child would inherit the exported token (§5.3/A4).
-        case $QLAUDE_AUTH in
-            bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;;
-            api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;;
-        esac
-        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
-        err "export ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL"
-        err "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
-        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL"
-        err "export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+        # A4: this list is the assertion target; values come from the shell's
+        # own params — a printenv child would inherit the exported token.
+        case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
+        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
+        err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
+        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
     fi
     _bin=${QLAUDE_CLAUDE_BIN:-claude}
     _abs=$(abs_exec "$_bin") || {

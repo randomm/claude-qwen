@@ -294,6 +294,69 @@ else
     echo "SKIP sequential echo tests (python3 missing)"
 fi
 
+# 10. macOS keychain WRITE (spec C6 §5.4): setup on Darwin must store the
+# token via `security add-generic-password -U ... -w` with the token on
+# STDIN (never argv — G4), keep it out of config.env, and degrade to the
+# file with a printed note when the keychain write fails. PATH-shims:
+# uname->Darwin + a security shim that persists stdin (round-trip: its
+# find-generic-password answers back from that file, so the gauntlet
+# tail passes exactly as it would on a real Mac).
+mkdir -p "$tmp/macok" "$tmp/macfail"
+_real_uname=$(command -v uname)
+for _d in "$tmp/macok" "$tmp/macfail"; do
+    printf '#!/bin/sh\ncase "$*" in "") echo Darwin;; *) exec %s "$@";; esac\n' \
+        "$_real_uname" >"$_d/uname"
+done
+# shellcheck disable=SC2016  # shim body quotes are intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
+    'case "$1" in' \
+    'add-generic-password) cat >> "$SEC_STDIN"; exit 0;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'esac' 'exit 0' >"$tmp/macok/security"
+# shellcheck disable=SC2016  # shim body quotes are intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
+    'case "$1" in' \
+    'add-generic-password) exit 1;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'esac' 'exit 0' >"$tmp/macfail/security"
+chmod +x "$tmp"/macok/* "$tmp"/macfail/*
+run_mac() { # $1 = shim dir; rest = setup args; token on our stdin
+    _shim=$1; shift
+    env -i PATH="$_shim:$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
+        QLAUDE_CONFIG_DIR="$wconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+        SEC_ARGV="$tmp/sec.argv" SEC_STDIN="$tmp/sec.stdin" \
+        SHIM_LOG="$tmp/curl.argv3" \
+        sh "$tool" setup "$@"
+}
+: >"$tmp/sec.argv"; : >"$tmp/sec.stdin"; rm -f "$wconf/config.env"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macok" -y \
+    --endpoint "$base" --token-stdin --model my-model \
+    --claude-bin "$tmp/bin/claude" 2>&1); _kcrc=$?
+if [ "$_kcrc" -eq 0 ]; then st=0; else st=1; fi
+t "mac keychain: setup -y exits 0 (round-trip gauntlet passed)" 0 $st
+if printf '%s\n' "$out" | grep -q 'Keychain'; then st=0; else st=1; fi
+t "mac keychain: printed the keychain note" 0 $st
+if [ -f "$wconf/config.env" ] \
+    && ! grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
+t "mac keychain: token NOT left in config.env when keychain holds it" 0 $st
+if grep -qF "$QLAUDE_CI_TOKEN" "$tmp/sec.stdin"; then st=0; else st=1; fi
+t "mac keychain: token was piped on security stdin (round-trip real)" 0 $st
+if ! grep -qF "$QLAUDE_CI_TOKEN" "$tmp/sec.argv"; then st=0; else st=1; fi
+t "mac keychain: token NEVER in security argv (C6/G4)" 0 $st
+# locked/odd keychain: add fails -> file fallback WITH a printed note.
+: >"$tmp/sec.argv"; rm -f "$wconf/config.env" "$tmp/sec.stdin"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macfail" -y \
+    --endpoint "$base" --token-stdin --model my-model \
+    --claude-bin "$tmp/bin/claude" 2>&1); _frc=$?
+if [ "$_frc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then
+    st=0
+else
+    st=1
+fi
+t "mac keychain: write failure degrades to 0600 file, still exits 0" 0 $st
+if printf '%s\n' "$out" | grep -qiE 'fall.?back|file'; then st=0; else st=1; fi
+t "mac keychain: degradation printed a note (never silent, never hard-fail)" 0 $st
+
 # 9. Terminal escape injection (security review): a hostile endpoint's
 # model ids are SERVER-CONTROLLED — the discovered-models line must not
 # carry raw ESC/CR/LF into the terminal. A dedicated shim answers the
