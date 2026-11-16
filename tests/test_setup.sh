@@ -351,14 +351,23 @@ t "mac keychain: token NEVER in security argv (C6/G4)" 0 $st
 out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macfail" -y \
     --endpoint "$base" --token-stdin --model my-model \
     --claude-bin "$tmp/bin/claude" 2>&1); _frc=$?
-if [ "$_frc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then
-    st=0
-else
-    st=1
-fi
+if [ "$_frc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
 t "mac keychain: write failure degrades to 0600 file, still exits 0" 0 $st
 if printf '%s\n' "$out" | grep -qiE 'fall.?back|file'; then st=0; else st=1; fi
 t "mac keychain: degradation printed a note (never silent, never hard-fail)" 0 $st
+# CI macos-15 reality (run 23f1d61): add succeeds, find does NOT. The keychain
+# is trusted only if write AND read-back agree; find-fail must degrade to file.
+mkdir -p "$tmp/macrebad"
+printf '#!/bin/sh\ncase "$*" in "") echo Darwin;; *) exec %s "$@";; esac\n' "$_real_uname" >"$tmp/macrebad/uname"
+# shellcheck disable=SC2016  # shim body quotes intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'case "$1" in' 'add-generic-password) cat >/dev/null; exit 0;;' 'find-generic-password) exit 1;;' 'esac' 'exit 0' >"$tmp/macrebad/security"
+chmod +x "$tmp/macrebad/"*
+: >"$tmp/sec.argv"; rm -f "$wconf/config.env" "$tmp/sec.stdin"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macrebad" -y --endpoint "$base" --token-stdin --model my-model --claude-bin "$tmp/bin/claude" 2>&1); _rrc=$?
+if [ "$_rrc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
+t "mac keychain: add-ok/find-fail (CI macos-15) degrades to file, exit 0" 0 $st
+if printf '%s\n' "$out" | grep -q 'Keychain'; then st=1; else st=0; fi
+t "mac keychain: find-fail never claims keychain storage (anti-vacuous)" 0 $st
 
 # 9. Terminal escape injection (security review): a hostile endpoint's
 # model ids are SERVER-CONTROLLED — the discovered-models line must not

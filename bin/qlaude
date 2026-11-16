@@ -435,11 +435,11 @@ cmd_setup() {
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
-        if printf '%s' "$_tok" | security add-generic-password \
-            -U -a "${_u:-qlaude}" -s qlaude -w 2>/dev/null; then
+        if printf '%s' "$_tok" | security add-generic-password -U -a "${_u:-qlaude}" -s qlaude -w 2>/dev/null \
+            && [ "$(security find-generic-password -s qlaude -w 2>/dev/null)" = "$_tok" ]; then
             _kc=1; err "token stored in the macOS Keychain (service qlaude)"
         else
-            err "keychain write failed (locked?) — falling back to the 0600 file"
+            err "keychain unavailable (write/read-back failed?) — falling back to the 0600 file"
         fi
     fi
     _t="$_cf.tmp.$$"
