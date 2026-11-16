@@ -32,14 +32,32 @@ fi
 
 # --- fetch: HTTPS always, except an explicitly chosen loopback test server
 # (an override only — the default above is never loopback). No silent http.
+# The loopback check parses the AUTHORITY, never prefix-matches the whole
+# URL: http://127.0.0.1:9@evil.com is evil.com as far as curl is concerned,
+# and any userinfo in an http URL is refused outright (spec C3 bounds with -m).
 fetch() { # fetch <url> <out>
     _url=$1 _out=$2
-    case $_url in
-        http://127.0.0.1:* | http://localhost:*)
-            curl -fsSL -o "$_out" "$_url"
+    _scheme=${_url%%://*}
+    case $_scheme in
+        https)
+            curl --proto '=https' --tlsv1.2 -m 30 -fsSL -o "$_out" "$_url"
             ;;
-        https://*)
-            curl --proto '=https' --tlsv1.2 -fsSL -o "$_out" "$_url"
+        http)
+            _auth=${_url#*://}
+            _auth=${_auth%%/*}
+            case $_auth in
+                *@*)
+                    err "refusing non-HTTPS source (userinfo in URL): $_url"
+                    return "$EXIT_PREREQ"
+                    ;;
+                127.0.0.1 | 127.0.0.1:* | localhost | localhost:*)
+                    curl -m 30 -fsSL -o "$_out" "$_url"
+                    ;;
+                *)
+                    err "refusing non-HTTPS source: $_url"
+                    return "$EXIT_PREREQ"
+                    ;;
+            esac
             ;;
         *)
             err "refusing non-HTTPS source: $_url"

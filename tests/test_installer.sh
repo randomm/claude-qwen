@@ -125,4 +125,67 @@ cp "$root/bin/qlaude" "$srv/bin/qlaude"
 run_install >/dev/null 2>&1
 t "re-run: idempotent exit 0" 0 $?
 
+# 8. Installed bytes must equal the served payload (no empty/wrong file).
+if cmp -s "$tmp/bin-i/qlaude" "$srv/bin/qlaude" && \
+   cmp -s "$tmp/conf-i/SYSTEM-PROMPT.md" "$srv/SYSTEM-PROMPT.md"; then st=0; else st=1; fi
+t "install: installed bytes match served payload" 0 $st
+
+# 9. QLAUDE_REF is honored: a second ref tree carries distinguishable content.
+mkdir -p "$tmp/www/v9.9.9/bin"
+cp "$root/bin/qlaude" "$tmp/www/v9.9.9/bin/qlaude"
+printf 'ref-pin-marker-prompt\n' >"$tmp/www/v9.9.9/SYSTEM-PROMPT.md"
+# the ref tree's checksum must cover its own bytes, not main's
+_h1=$(sha256sum "$tmp/www/v9.9.9/bin/qlaude" | cut -d' ' -f1)
+_h2=$(sha256sum "$tmp/www/v9.9.9/SYSTEM-PROMPT.md" | cut -d' ' -f1)
+{ printf '%s  bin/qlaude\n' "$_h1"; printf '%s  SYSTEM-PROMPT.md\n' "$_h2"; } \
+    >"$tmp/www/v9.9.9/install.sha256"
+run_install QLAUDE_REF=v9.9.9 \
+    QLAUDE_INSTALL_DIR="$tmp/bin-r" QLAUDE_CONFIG_DIR="$tmp/conf-r" >/dev/null 2>&1
+st=$?
+if [ "$st" -eq 0 ] && grep -q 'ref-pin-marker-prompt' "$tmp/conf-r/SYSTEM-PROMPT.md"; then
+    st=0
+else
+    st=1
+fi
+t "QLAUDE_REF honored: installed content follows the ref" 0 $st
+
+# 10. Loopback exception must parse the authority, not prefix-match: a
+# userinfo URL (http://127.0.0.1:PORT@127.0.0.1:PORT/...) is NOT loopback-safe
+# and must be refused outright (userinfo is exactly how the prefix match was
+# defeated — curl connects to the host after @).
+_hp=${base#http://}
+out=$(run_install QLAUDE_BASE_URL="http://${_hp}@${_hp}" \
+    QLAUDE_INSTALL_DIR="$tmp/bin-u" QLAUDE_CONFIG_DIR="$tmp/conf-u" 2>&1)
+st=$?
+if [ "$st" -ne 0 ] && ! [ -f "$tmp/bin-u/qlaude" ]; then st=0; else st=1; fi
+t "userinfo loopback URL refused, nothing installed" 0 $st
+
+# 11. curl flags on the HTTPS branch are observable (C3): a PATH shim
+# records argv so --proto pinning and -m bounds can be asserted without
+# a live TLS server. The shim exits 22 (like a curl 404) after logging.
+shim="$tmp/shimbin"
+mkdir -p "$shim"
+real_curl=$(command -v curl)
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SHIM_LOG"' \
+    'exec '"$real_curl"' --connect-timeout 1 -o /dev/null https://127.0.0.1:1/ || exit 22' >"$shim/curl"
+chmod +x "$shim/curl"
+: >"$tmp/https.argv"
+SHIM_LOG="$tmp/https.argv" run_install QLAUDE_BASE_URL=https://qlaude.example.invalid \
+    PATH="$shim:/usr/bin:/bin" >/dev/null 2>&1
+if grep -qxF -- '--proto' "$tmp/https.argv" && grep -qxF -- '=https' "$tmp/https.argv"; then st=0; else st=1; fi
+t "https fetch passes --proto pinning" 0 $st
+if grep -qx -- '-m' "$tmp/https.argv" || grep -qxF -- '--max-time' "$tmp/https.argv" \
+   || grep -qE '^(-m|--max-time)$' "$tmp/https.argv"; then st=0; else st=1; fi
+t "https fetch passes a curl -m bound (spec C3)" 0 $st
+if grep -qE '^ftp:' "$tmp/https.argv" || grep -qE '^http://' "$tmp/https.argv"; then st=1; else st=0; fi
+t "no plain-HTTP/ftp request reaches curl on https base" 0 $st
+
+# 12. Non-HTTPS, non-loopback scheme is refused before curl runs.
+out=$(run_install QLAUDE_BASE_URL=ftp://127.0.0.1:21/x \
+    QLAUDE_INSTALL_DIR="$tmp/bin-f" QLAUDE_CONFIG_DIR="$tmp/conf-f" 2>&1)
+st=$?
+if [ "$st" -ne 0 ] && printf '%s\n' "$out" | grep -qiE 'refus|non-https'; then st=0; else st=1; fi
+t "ftp base URL refused with a named refusal" 0 $st
+
 exit "$fail"
