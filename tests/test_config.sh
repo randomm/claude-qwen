@@ -29,16 +29,16 @@ QLAUDE_ENDPOINT='' QLAUDE_MODEL='' QLAUDE_AUTH='' QLAUDE_CONTEXT_TOKENS='' \
     QLAUDE_EFFORT='' QLAUDE_CLAUDE_BIN='' QLAUDE_TOKEN=''
 config_parse "$tmp/valid" >/dev/null 2>&1
 t "valid: parse exits 0" 0 $?
-[ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]
-t "valid: endpoint loaded" 0 $?
-[ "$QLAUDE_MODEL" = "my-model" ]
-t "valid: model loaded" 0 $?
-[ "$QLAUDE_AUTH" = "bearer" ]
-t "valid: auth defaults to bearer" 0 $?
-[ "$QLAUDE_CONTEXT_TOKENS" = "262144" ]
-t "valid: context defaults to 262144" 0 $?
-[ "$QLAUDE_EFFORT" = "medium" ]
-t "valid: effort defaults to medium" 0 $?
+if [ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]; then st=0; else st=1; fi
+t "valid: endpoint loaded" 0 $st
+if [ "$QLAUDE_MODEL" = "my-model" ]; then st=0; else st=1; fi
+t "valid: model loaded" 0 $st
+if [ "$QLAUDE_AUTH" = "bearer" ]; then st=0; else st=1; fi
+t "valid: auth defaults to bearer" 0 $st
+if [ "$QLAUDE_CONTEXT_TOKENS" = "262144" ]; then st=0; else st=1; fi
+t "valid: context defaults to 262144" 0 $st
+if [ "$QLAUDE_EFFORT" = "medium" ]; then st=0; else st=1; fi
+t "valid: effort defaults to medium" 0 $st
 
 # 2. Corrupted config: fix message pointing at qlaude setup, no crash.
 cat >"$tmp/broken" <<'CFG'
@@ -72,8 +72,8 @@ CFG
 QLAUDE_ENDPOINT='' QLAUDE_MODEL=''
 config_parse "$tmp/v1" 2>"$tmp/v1.warn"
 t "v1-suffix: parse exits 0" 0 $?
-[ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]
-t "v1-suffix: trailing /v1 stripped" 0 $?
+if [ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]; then st=0; else st=1; fi
+t "v1-suffix: trailing /v1 stripped" 0 $st
 grep -qi 'v1' "$tmp/v1.warn"
 t "v1-suffix: warning printed" 0 $?
 
@@ -105,9 +105,34 @@ else
 fi
 
 # 8. CONFDIR/INSTALLDIR resolve exactly per spec §0.
-[ "${QLAUDE_CONFDIR_RESOLVED:-}" = "${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}" ]
-t "paths: CONFDIR matches spec §0" 0 $?
-[ "${QLAUDE_INSTALLDIR_RESOLVED:-}" = "${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}" ]
-t "paths: INSTALLDIR matches spec §0" 0 $?
+if [ "${QLAUDE_CONFDIR_RESOLVED:-}" = "${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}" ]; then st=0; else st=1; fi
+t "paths: CONFDIR matches spec §0" 0 $st
+if [ "${QLAUDE_INSTALLDIR_RESOLVED:-}" = "${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}" ]; then st=0; else st=1; fi
+t "paths: INSTALLDIR matches spec §0" 0 $st
+
+# 9. A corrupted line must never be echoed (it can carry a token line).
+# The corrupted line itself carries the token (spaces make the key invalid).
+printf 'QLAUDE_TOKEN = %s\n' "$QLAUDE_CI_TOKEN" >"$tmp/leaky"
+out=$(config_parse "$tmp/leaky" 2>&1)
+if printf '%s\n' "$out" | grep -qF "$QLAUDE_CI_TOKEN"; then
+    t "corrupt line contents never echoed" 1 1
+else
+    t "corrupt line contents never echoed" 0 0
+fi
+
+# 10. A non-empty QLAUDE_* env beats the file value (spec §5.2 precedence);
+# an exported empty string means unset/inherited. All keys are reset first:
+# direct config_parse calls share this shell's state.
+cat >"$tmp/envmodel" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com
+QLAUDE_MODEL=my-model
+CFG
+QLAUDE_ENDPOINT='' QLAUDE_MODEL='env-override' QLAUDE_AUTH='' \
+    QLAUDE_CONTEXT_TOKENS='' QLAUDE_EFFORT='' QLAUDE_CLAUDE_BIN='' QLAUDE_TOKEN=''
+config_parse "$tmp/envmodel" >/dev/null 2>&1
+st=$?
+t "env precedence: parse ok" 0 $st
+[ "$QLAUDE_MODEL" = "env-override" ]; st=$?
+t "env precedence: exported env beats file value" 0 $st
 
 exit "$fail"

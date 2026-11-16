@@ -7,14 +7,21 @@ set -u
 QLAUDE_VERSION=0.0.1
 
 # --- paths: canonical definitions per spec §0 — every use means exactly this
+# shellcheck disable=SC2034  # read by the test suites; constants are the API
 QLAUDE_INSTALLDIR_RESOLVED=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
+# shellcheck disable=SC2034  # read by the test suites; constants are the API
 QLAUDE_CONFDIR_RESOLVED=${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}
 
-# --- exit codes: centralized per the spec §5.5 gauntlet table
+# --- exit codes: centralized per the spec §5.5 gauntlet table. All are part
+# of the contract used by doctor/setup paths (T4-T6), not dead today.
+# shellcheck disable=SC2034  # used by later tasks per spec §5.5 exit map
 EXIT_USAGE=1
 EXIT_PREREQ=2
+# shellcheck disable=SC2034  # spec §5.5 step-1 exit (auth failures)
 EXIT_AUTH=3
+# shellcheck disable=SC2034  # spec §5.5 step-2 exit (claude failures)
 EXIT_CLI=4
+# shellcheck disable=SC2034  # spec §5.5 step-3 exit (tool-probe failures)
 EXIT_TOOL=5
 
 # --- output discipline (spec C9): diagnostics on stderr only, plain when
@@ -65,22 +72,25 @@ config_parse() {
         return "$EXIT_USAGE"
     fi
 
-    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk=''
+    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0
+    # Never echo the offending line: a corrupted line may itself carry the
+    # token (spec §6, G4) — report the line number only.
     while IFS= read -r _line || [ -n "$_line" ]; do
+        _n=$((_n + 1))
         case $_line in
             '' | '#'*) continue ;;
         esac
         case $_line in
             *=*) ;;
             *)
-                err "config corrupted ('$_line' is not KEY=value) — run: qlaude setup"
+                err "config corrupted (line $_n is not KEY=value) — run: qlaude setup"
                 return "$EXIT_USAGE"
                 ;;
         esac
         _key=${_line%%=*}
         case $_key in
             '' | *[!A-Z0-9_]*)
-                err "config corrupted ('$_line' is not KEY=value) — run: qlaude setup"
+                err "config corrupted (line $_n is not KEY=value) — run: qlaude setup"
                 return "$EXIT_USAGE"
                 ;;
         esac
@@ -109,7 +119,7 @@ config_parse() {
     case $QLAUDE_AUTH in
         '' | bearer | api-key) ;;
         *)
-            err "config corrupted (unknown auth style '$QLAUDE_AUTH') — run: qlaude setup"
+            err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"
             return "$EXIT_USAGE"
             ;;
     esac

@@ -6,11 +6,20 @@ set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
 
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "qlaude: prerequisite missing: python3 is required to run the offline stub" >&2
+    exit 2
+fi
+
 tmp=$(mktemp -d)
 stub_pid=''
+# Invoked indirectly via trap on exit.
+# shellcheck disable=SC2329
 cleanup() {
-    [ -n "$stub_pid" ] && kill "$stub_pid" 2>/dev/null
-    wait "$stub_pid" 2>/dev/null
+    if [ -n "$stub_pid" ]; then
+        kill "$stub_pid" 2>/dev/null
+        wait "$stub_pid" 2>/dev/null
+    fi
     rm -rf "$tmp"
     return 0
 }

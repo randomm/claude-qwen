@@ -59,4 +59,18 @@ else
     t "setup verb is dispatched (placeholder reached)" 1 1
 fi
 
+# 4b. Colour branch forced: with colour enabled, err() emits the escape.
+# Sourced by path — it is the tool under test.
+# shellcheck disable=SC1090
+# C_ERR/C_RESET are consumed by the sourced err() implementation.
+# shellcheck disable=SC2034
+err_out=$( . "$tool" >/dev/null 2>&1
+    C_ERR=$(printf '\033[31m'); C_RESET=$(printf '\033[0m')
+    err probe 2>&1 )
+if printf '%s' "$err_out" | grep -q "$(printf '\033')"; then
+    t "colour branch: err() emits escapes when enabled" 0 0
+else
+    t "colour branch: err() emits escapes when enabled" 1 1
+fi
+
 exit "$fail"
