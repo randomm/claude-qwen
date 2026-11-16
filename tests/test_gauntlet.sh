@@ -31,6 +31,10 @@ cat >"$tmp/bin/claude" <<'SHIM'
 #!/bin/sh
 printf '%s\n' "$@" >>"$CLAUDE_LOG"
 printf 'HOME=%s\n' "$HOME" >>"$CLAUDE_LOG"
+printf 'PWD0=%s\n' "$PWD" >>"$CLAUDE_LOG"
+printf 'BIN0=%s\n' "$0" >>"$CLAUDE_LOG"
+printf 'ENVAT=%s\n' "${ANTHROPIC_AUTH_TOKEN:-none}" >>"$CLAUDE_LOG"
+printf 'ENVAK=%s\n' "${ANTHROPIC_API_KEY:-none}" >>"$CLAUDE_LOG"
 case "$*" in
     *QLAUDE_TOOL_OK*) echo "QLAUDE_TOOL_OK" ;;
     *) echo "OK"
@@ -63,6 +67,8 @@ run_doc() { # doctor with isolated env; shims log everything
         CURL_LOG="$tmp/curl.argv" CURL_STDIN="$tmp/curl.stdin" \
         CLAUDE_LOG="$tmp/claude.argv" \
         QLAUDE_STUB="${QLAUDE_STUB:-}" \
+        QLAUDE_CLAUDE_BIN="${QLAUDE_CLAUDE_BIN:-}" \
+        ANTHROPIC_API_KEY=poison-inherited-key \
         HTTPS_PROXY="${HTTPS_PROXY:-}" NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY:-}" \
         CLAUDE_CODE_AUTO_MODE_SERVER="${CLAUDE_CODE_AUTO_MODE_SERVER:-}" \
         sh "$tool" doctor
@@ -193,7 +199,44 @@ t "step 4: proxy pollution warned" 0 $st
 if printf '%s\n' "$out" | grep -qi 'AUTO_MODE_SERVER'; then st=0; else st=1; fi
 t "step 4: stale AUTO_MODE_SERVER warned" 0 $st
 
-# 10. One line per step on stderr (rule: PASS/FAIL/SKIP <step>: cause→fix).
+# 10b (security review): relative-with-slash QLAUDE_CLAUDE_BIN must reach
+# the exec via an ABSOLUTE path (same hijack class as the launcher fix).
+mkdir -p "$tmp/sub"
+cat >"$tmp/sub/claude" <<'SHIM2'
+#!/bin/sh
+printf '%s\n' "$@" >>"$CLAUDE_LOG"
+printf 'BIN0=%s\n' "$0" >>"$CLAUDE_LOG"
+echo "OK"
+SHIM2
+chmod +x "$tmp/sub/claude"
+: >"$tmp/claude_rel.argv"
+( cd "$tmp" && env -i PATH=/usr/bin:/bin HOME="$tmp/poisonhome" \
+    QLAUDE_CONFIG_DIR="$conf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+    CURL_LOG="$tmp/curl4.argv" CURL_STDIN="$tmp/curl4.stdin" \
+    CLAUDE_LOG="$tmp/claude_rel.argv" QLAUDE_STUB=1 \
+    QLAUDE_CLAUDE_BIN="sub/claude" sh "$tool" doctor ) >/dev/null 2>&1
+if grep -qxF "BIN0=$tmp/sub/claude" "$tmp/claude_rel.argv"; then st=0; else st=1; fi
+t "probe bin: slash-relative QLAUDE_CLAUDE_BIN exec'd absolutely" 0 $st
+
+# 10c (security review): probes run in a FRESH CWD (no project-scoped
+# .claude/settings.json, .mcp.json, CLAUDE.md from the invocation dir)
+# and inherited ANTHROPIC_*/CLAUDE_CODE_* poison is scrubbed from them.
+QLAUDE_STUB=1 run_doc >/dev/null 2>&1
+# Scope to PROBE invocations only: meta lines from a --max-turns arg block
+# through its ENVAK= line. step 0's --version call runs in the user CWD by
+# design and would false-positive the scrub/cwd checks.
+_pb=$(awk '/--max-turns/{f=1} f{print} /^ENVAK=/{f=0}' "$tmp/claude.argv")
+if printf '%s\n' "$_pb" | grep -qxF "PWD0=$here" || \
+   printf '%s\n' "$_pb" | grep -qxF "PWD0=$root"; then st=1; else st=0; fi
+t "probe cwd: never the user's project directory" 0 $st
+if printf '%s\n' "$_pb" | grep -q '^PWD0=/tmp\|^PWD0=/var'; then st=0; else st=1; fi
+t "probe cwd: is a fresh temp dir (anti-vacuous)" 0 $st
+if printf '%s\n' "$_pb" | grep -q 'ENVAK=poison-inherited-key'; then st=1; else st=0; fi
+t "probe env: inherited ANTHROPIC_API_KEY scrubbed" 0 $st
+if printf '%s\n' "$_pb" | grep -q "ENVAT=$QLAUDE_CI_TOKEN"; then st=0; else st=1; fi
+t "probe env: qlaude token exported into the probe child" 0 $st
+
+# 11. One line per step on stderr (rule: PASS/FAIL/SKIP <step>: cause→fix).
 QLAUDE_STUB=1 run_doc 2>"$tmp/doc.err" >/dev/null
 _lines=$(grep -cE '^(PASS|FAIL|SKIP) [0-9]' "$tmp/doc.err")
 if [ "$_lines" -ge 4 ] && [ "$_lines" -le 8 ]; then st=0; else st=1; fi
