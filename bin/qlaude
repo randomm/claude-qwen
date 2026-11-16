@@ -25,6 +25,17 @@ C_RESET=''
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
 # prompt — interactive question, cursor stays on the prompt line (unlike err).
 prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
+_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
+# it ("Illegal option -s" — ubuntu-latest CI, /bin/sh IS dash); probe exits 1
+# (EOF, not "illegal"=2) to accept the flag, else stty -echo + signal trap.
+    # shellcheck disable=SC3045
+    if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
+    else
+        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' INT TERM
+        IFS= read -r "$1"; _hr_st=$?
+        trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
+    fi
+}
 usage() {
     cat <<'USAGE'
 usage: qlaude [command] [args...]
@@ -385,9 +396,7 @@ cmd_setup() {
     if [ -n "$_tok_stdin" ]; then IFS= read -r _tok || _tok=''; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
         prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
-        # §5.4 mandates read -rs: not strict POSIX, but dash/bash/macOS sh
-        # shellcheck disable=SC3045
-        IFS= read -rs _tok || _tok=''
+        _hidden_read _tok || _tok=''
         printf '\n' >&2
     fi
     if [ -z "$_tok" ]; then

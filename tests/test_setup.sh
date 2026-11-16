@@ -136,6 +136,9 @@ t "wizard intro states 0600 storage (A4 promise)" 0 $st
 # PTY case pins the prompt ORDER: endpoint URL before the token prompt.
 # script(1) if present, else a python3 pty driver (python3 is already a
 # hard harness prerequisite), else honest SKIP — never a silent pass.
+_strip_pty() { # pty transcript -> plain text (CR gone, SGR colours gone)
+    tr -d '\r' <"$1" | LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g"
+}
 _pty_run() { # argv: cmd... — child gets a pty; our stdin is fed to it
     python3 -c '
 import os, pty, sys
@@ -178,8 +181,10 @@ if command -v python3 >/dev/null 2>&1; then
     t "interactive: endpoint asked BEFORE token, token prompt names it" 0 $st
     # cursor UX, proven structurally: with no input pending between the
     # two reads, the NEXT qlaude output must follow the endpoint prompt
-    # on the SAME line (no newline emitted after a prompt).
-    if tr -d '\r' <"$tmp/pty.out" | grep -q 'route to): qlaude: token'; then
+    # on the SAME line (no newline emitted after a prompt). Colour is
+    # shell-dependent under a pty (dash emits ANSI even with TERM unset),
+    # so strip escape sequences before matching, on every host.
+    if _strip_pty "$tmp/pty.out" | grep -q 'route to): qlaude: token'; then
         st=0
     else
         st=1
@@ -192,12 +197,101 @@ if command -v python3 >/dev/null 2>&1; then
             QLAUDE_CONFIG_DIR="$tmp/pconf2" QLAUDE_INSTALL_DIR="$tmp/bin" \
             sh "$tool" setup >"$tmp/pty2.out" 2>&1
     _rc=$?
-    if [ "$_rc" -ne 0 ] && grep -q 'break every launch' "$tmp/pty2.out"; then st=0; else st=1; fi
+    if [ "$_rc" -ne 0 ] && _strip_pty "$tmp/pty2.out" | grep -q 'break every launch'; then
+        st=0
+    else
+        st=1
+    fi
     t "empty model refused (no empty-model config saved)" 0 $st
     if [ ! -f "$tmp/pconf2/config.env" ]; then st=0; else st=1; fi
     t "empty model: config.env NOT written (anti-vacuous)" 0 $st
 else
     echo "SKIP interactive pty tests (python3 missing)"
+fi
+# 8c: the hidden token read under DASH explicitly. `read -s` is NOT POSIX —
+# dash rejects -s ("Illegal option -s", proven on ubuntu-latest CI where
+# /bin/sh IS dash; the host /bin/sh being bash hid this until T8). Pin the
+# stty-fallback path on every host: same pty scenario with child = dash.
+if command -v python3 >/dev/null 2>&1 && command -v dash >/dev/null 2>&1; then
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+        _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
+            QLAUDE_CONFIG_DIR="$tmp/dconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+            dash "$tool" >"$tmp/dpty.out" 2>&1
+    # rc deliberately NOT asserted: the gauntlet tail exits 2 without a
+    # claude binary on PATH (same as 8b's bash case — token-in-config below
+    # is the real proof the wizard ran to the save).
+    _dp=$(_strip_pty "$tmp/dpty.out")
+    if printf '%s\n' "$_dp" | grep -q 'Illegal option'; then st=1
+    elif printf '%s\n' "$_dp" | grep -q 'route to): qlaude: token' \
+        && printf '%s\n' "$_dp" | grep -q 'qlaude: model'; then st=0
+    else st=1; fi
+    t "dash wizard: hidden read works (no Illegal option), cursor kept" 0 $st
+    # the token must have reached the config (the hidden read got real input)
+    if [ -f "$tmp/dconf/config.env" ] \
+        && grep -q 'ptytoken-9x' "$tmp/dconf/config.env"; then st=0; else st=1; fi
+    t "dash wizard: token actually read into config (anti-vacuous)" 0 $st
+else
+    echo "SKIP dash pty tests (python3 or dash missing)"
+fi
+# 8d: hidden-ness proper. The eager-feed driver above can prove flow but not
+# concealment (all bytes land while ECHO is still on). This driver feeds each
+# line only when its prompt has appeared, so a broken stty -echo / read -s
+# leaves the token visibly echoed by the tty. Anti-vacuous: the endpoint line
+# IS echoed, proving tty echo is live when the token line goes in unechoed.
+# The settle sleep lets stty -echo land after the prompt print but before the
+# bytes arrive (sub-ms in practice; 150 ms covers any scheduler).
+_pty_seq() { # argv: cmd... — sequential prompt-driven feed, transcript out
+    python3 -c '
+import os, pty, sys, time, select
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+log = b""
+def rd(until, limit=10.0):
+    global log
+    mark = len(log)
+    while until not in log[mark:]:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if not r:
+            limit -= 0.2
+            if limit <= 0:
+                return
+            continue
+        try:
+            b = os.read(fd, 4096)
+        except OSError:
+            return
+        if not b:
+            return
+        log += b
+os.write(fd, b"http://127.0.0.1:1\n")
+rd(b"token for")
+time.sleep(0.15)
+os.write(fd, b"ptytoken-9x\n")
+rd(b"qlaude: model")
+os.write(fd, b"mymodel\n")
+rd(b"saved")
+sys.stdout.buffer.write(log)
+sys.stdout.buffer.flush()
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+' "$@"
+}
+if command -v python3 >/dev/null 2>&1; then
+    for _ch in sh dash; do
+        [ "$_ch" = dash ] && ! command -v dash >/dev/null 2>&1 && continue
+        _pty_seq env -i PATH=/usr/bin:/bin HOME="$tmp" \
+            QLAUDE_CONFIG_DIR="$tmp/seq_$_ch" QLAUDE_INSTALL_DIR="$tmp/bin" \
+            "$_ch" "$tool" setup >"$tmp/seq_$_ch.out" 2>&1
+        if grep -qF 'ptytoken-9x' "$tmp/seq_$_ch.out"; then st=1; else st=0; fi
+        t "hidden token never echoed by the tty ($_ch child)" 0 $st
+        if grep -qF 'http://127.0.0.1:1' "$tmp/seq_$_ch.out"; then st=0; else st=1; fi
+        t "  anti-vacuous: endpoint line WAS echoed ($_ch, echo is live)" 0 $st
+    done
+else
+    echo "SKIP sequential echo tests (python3 missing)"
 fi
 
 # 9. Terminal escape injection (security review): a hostile endpoint's
