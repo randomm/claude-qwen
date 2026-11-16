@@ -22,6 +22,20 @@ jobs:
           for f in tests/test_*.sh tests/run_tests.sh; do dash -n "$f"; done
       - name: checksum drift (install.sha256 must match the payload)
         run: sh tools/gen-checksum.sh --check
+      - name: A6 — every launcher export is documented in README
+        # The launcher's contract constant (bin/qlaude QLAUDE_EXPORTS, §5.3)
+        # must be a subset of the README env docs, mechanically (plan T8).
+        # If a name is removed from the constant, the pin below fires.
+        run: |
+          _names=$(sed -n "s/^QLAUDE_EXPORTS='\(.*\)'$/\1/p" bin/qlaude)
+          [ -n "$_names" ] || { echo 'A6: QLAUDE_EXPORTS constant not found' >&2; exit 1; }
+          _missing=0
+          for _n in $_names; do
+            grep -q "$_n" README.md || {
+              echo "A6: launcher exports $_n but README does not document it" >&2
+              _missing=1; }
+          done
+          exit "$_missing"
       - name: offline suite (A1-A6 — stub plus every tests/test_*.sh)
         # The suite is the product's acceptance harness; if CI never runs
         # it, every pin in it is decoration (T7 review finding).
