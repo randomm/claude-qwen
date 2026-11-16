@@ -135,6 +135,26 @@ cp "$tmp/config.wrong" "$tmp/keep"; # marker only; restored below
 printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\nQLAUDE_TOKEN=%s\n' \
     "$base" "$QLAUDE_CI_TOKEN" >"$conf/config.env"
 
+# 5b (T7 review): token REMOVED entirely (spec §5.8 negative: removed/wrong
+# — A2 names the removed case). Distinct branch from wrong-token: it
+# short-circuits before curl.
+printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\n' "$base" >"$conf/config.env"
+out=$(QLAUDE_STUB=1 run_doc 2>&1)
+st=$?
+if [ "$st" -eq 3 ]; then st=0; else st=1; fi
+t "token removed: exit 3 (auth)" 0 $st
+if printf '%s\n' "$out" | grep -qiE 'no token|token.*setup|qlaude setup'; then st=0; else st=1; fi
+t "token removed: actionable hint printed" 0 $st
+# anti-vacuous: this run must NOT have hit the network (curl stdin log is
+# from earlier cases only — a curl call here would append a new capture)
+_n_before=$(grep -c '^url = ' "$tmp/curl.stdin" 2>/dev/null || echo 0)
+: >"$tmp/curl.stdin"
+QLAUDE_STUB=1 run_doc >/dev/null 2>&1
+if [ ! -s "$tmp/curl.stdin" ]; then st=0; else st=1; fi
+t "token removed: short-circuits before curl (no request made)" 0 $st
+printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\nQLAUDE_TOKEN=%s\n' \
+    "$base" "$QLAUDE_CI_TOKEN" >"$conf/config.env"
+
 # 6. 404 path (plan T5): an endpoint whose /v1/messages does not exist
 # (path mounted elsewhere) → /v1 hint + ONE auto-fix attempt with a
 # printed notice; the repair cannot reach this stub, so the run must end

@@ -22,6 +22,10 @@ jobs:
           for f in tests/test_*.sh tests/run_tests.sh; do dash -n "$f"; done
       - name: checksum drift (install.sha256 must match the payload)
         run: sh tools/gen-checksum.sh --check
+      - name: offline suite (A1-A6 — stub plus every tests/test_*.sh)
+        # The suite is the product's acceptance harness; if CI never runs
+        # it, every pin in it is decoration (T7 review finding).
+        run: sh tests/run_tests.sh
       - name: public-repo hygiene grep
         # Each forbidden word is split by shell string concatenation so this
         # file does not match its own grep (the concatenation is resolved at
@@ -43,13 +47,18 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: one config dir for installer + setup + doctor
+      - name: one config dir + stub mode for every qlaude call in this job
         # SYSTEM-PROMPT.md is installed into QLAUDE_CONFIG_DIR and doctor's
         # step 0 requires it there — installer and doctor must never
-        # disagree (that disagreement broke the first CI run). Exported
-        # once here ($GITHUB_ENV reaches every later step); the runner
-        # context is not legal in job-level env, hence this form.
-        run: echo "QLAUDE_CONFIG_DIR=$RUNNER_TEMP/conf" >> "$GITHUB_ENV"
+        # disagree (that disagreement broke the first CI run). QLAUDE_STUB=1
+        # must cover the setup tail's gauntlet too, or step 3 records a
+        # PASS from the stub echoing the probe prompt back — spec §5.8:
+        # "SKIP is honest, faked PASS is not". Exported once here
+        # ($GITHUB_ENV reaches every later step); the runner context is
+        # not legal in job-level env, hence this form.
+        run: |
+          echo "QLAUDE_CONFIG_DIR=$RUNNER_TEMP/conf" >> "$GITHUB_ENV"
+          echo "QLAUDE_STUB=1" >> "$GITHUB_ENV"
       - name: install claude code (official channel, pinned version)
         run: npm install -g @anthropic-ai/claude-code@2.1.325
       - name: pin line — version actually installed + help contract
@@ -90,7 +99,7 @@ jobs:
               --endpoint "http://127.0.0.1:${STUB_PORT}" \
               --model stub-model \
               --claude-bin "$(command -v claude)"
-          QLAUDE_STUB=1 "$RUNNER_TEMP/bin/qlaude" doctor
+          "$RUNNER_TEMP/bin/qlaude" doctor
           # config must be 0600 (spec §5.2)
           test "$(ls -l "${{ runner.temp }}/conf/config.env" | cut -c2-10)" = "rw-------"
 
@@ -114,7 +123,7 @@ jobs:
           QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/claude-qwen \
           QLAUDE_REF="$FETCH_REF" \
           QLAUDE_INSTALL_DIR="$CH/bin" QLAUDE_CONFIG_DIR="$CH/conf" \
-          STUB_PORT="$STUB_PORT" CLAUDE_BIN="$(command -v claude)" \
+          QLAUDE_STUB=1 STUB_PORT="$STUB_PORT" CLAUDE_BIN="$(command -v claude)" \
           dash -c 'sh "$GITHUB_WORKSPACE/install.sh" \
             && printf %s\\n "$QLAUDE_CI_TOKEN" | "$QLAUDE_INSTALL_DIR/qlaude" setup -y --token-stdin --endpoint "http://127.0.0.1:$STUB_PORT" --model stub-model --claude-bin "$CLAUDE_BIN" \
             && QLAUDE_STUB=1 "$QLAUDE_INSTALL_DIR/qlaude" doctor \
@@ -144,3 +153,17 @@ jobs:
           [ "${1:-0}" = 3 ] || { echo "expected exit 3, got ${1:-0}" >&2; cat "$CH/doc.out" >&2; exit 1; }
           grep -qiE 'auth|token|401|403' "$CH/doc.out" || {
             echo 'auth hint missing — stub gullibility not excluded' >&2; exit 1; }
+      # spec §5.8 + A2 name the REMOVED-token case specifically: distinct
+      # branch (short-circuits before curl), so it needs its own proof.
+      - name: doctor with the token REMOVED must exit 3 with the hint
+        run: |
+          CH2=$(mktemp -d); mkdir -p "$CH2/conf"
+          printf 'QLAUDE_ENDPOINT=http://127.0.0.1:1\nQLAUDE_MODEL=stub-model\n' \
+            > "$CH2/conf/config.env"
+          chmod 600 "$CH2/conf/config.env"
+          cp "$GITHUB_WORKSPACE/SYSTEM-PROMPT.md" "$CH2/conf/"
+          set --; QLAUDE_CONFIG_DIR="$CH2/conf" HOME="$CH2" \
+            sh "$GITHUB_WORKSPACE/bin/qlaude" doctor > "$CH2/doc.out" 2>&1 || set -- "$?"
+          [ "${1:-0}" = 3 ] || { echo "expected exit 3, got ${1:-0}" >&2; cat "$CH2/doc.out" >&2; exit 1; }
+          grep -qiE 'no token|token.*setup|qlaude setup' "$CH2/doc.out" || {
+            echo 'removed-token hint missing' >&2; exit 1; }
