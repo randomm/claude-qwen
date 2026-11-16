@@ -140,7 +140,11 @@ cmd_ensure_path() {
         printf 'would append to %s:\n%s\n%s\n%s\n' "$_f" '# qlaude PATH' "$_exp" '# end qlaude PATH' >&2
         return 0
     fi
-    printf '\n%s\n%s\n%s\n' '# qlaude PATH' "$_exp" '# end qlaude PATH' >>"$_f"
+    # no set -e: the redirect failure must be checked, never reported as success
+    if ! printf '\n%s\n%s\n%s\n' '# qlaude PATH' "$_exp" '# end qlaude PATH' >>"$_f" 2>/dev/null; then
+        err "could not write $_f — check its permissions"
+        return "$EXIT_PREREQ"
+    fi
     err "PATH updated in $_f — open a new terminal to pick it up"
 }
 # --- wizard (§5.4)

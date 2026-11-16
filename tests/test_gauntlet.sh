@@ -243,7 +243,7 @@ cat >"$tmp/failbin/claude" <<'SHIM3'
 #!/bin/sh
 [ "$1" = --version ] && exit 0
 echo "qlaude-test-login-fail-7z: not authenticated" >&2
-printf 'hostile\033[31mred\n' >&2
+printf 'hostile\033[31mred\nwith\rcrbyte\n' >&2
 exit 1
 SHIM3
 chmod +x "$tmp/failbin/claude"
@@ -268,6 +268,8 @@ t "step 2 fail: no false PASS 2 (anti-vacuous)" 0 $st
 # must still reach the user (anti-vacuous pair to the escape assertion).
 if printf '%s' "$out" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
 t "step 2 fail: control bytes stripped from the verbatim dump" 0 $st
+if printf '%s' "$out" | grep -q "$(printf '\r')"; then st=1; else st=0; fi
+t "step 2 fail: CR stripped too (no line-overwrite tricks)" 0 $st
 if printf '%s\n' "$out" | grep -qF 'hostile'; then st=0; else st=1; fi
 t "step 2 fail: printable text still surfaced (anti-vacuous)" 0 $st
 
