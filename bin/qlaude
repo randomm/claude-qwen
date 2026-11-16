@@ -1,0 +1,172 @@
+#!/bin/sh
+# qlaude — Claude Code against your own endpoint, no env-var literacy.
+# Strict POSIX sh (spec C1): shellcheck -s sh clean, dash -n clean.
+# Never eval config contents (spec §6); no set -x anywhere (spec §6).
+set -u
+
+QLAUDE_VERSION=0.0.1
+
+# --- paths: canonical definitions per spec §0 — every use means exactly this
+QLAUDE_INSTALLDIR_RESOLVED=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
+QLAUDE_CONFDIR_RESOLVED=${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}
+
+# --- exit codes: centralized per the spec §5.5 gauntlet table
+EXIT_USAGE=1
+EXIT_PREREQ=2
+EXIT_AUTH=3
+EXIT_CLI=4
+EXIT_TOOL=5
+
+# --- output discipline (spec C9): diagnostics on stderr only, plain when
+# NO_COLOR / TERM=dumb / non-TTY
+if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then
+    C_ERR=''
+else
+    C_ERR=$(printf '\033[31m')
+fi
+C_RESET=''
+if [ -z "$C_ERR" ]; then
+    :
+else
+    C_RESET=$(printf '\033[0m')
+fi
+
+err() {
+    printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2
+}
+
+usage() {
+    cat <<'USAGE'
+usage: qlaude [command] [args...]
+
+Commands:
+  (none)         launch Claude Code against the configured endpoint
+  setup          guided configuration (interview + self-test)
+  doctor         run the self-test gauntlet
+  config         show resolved configuration (never the token)
+  ensure-path    add the install dir to PATH (consent-based)
+  --version      print version
+  --help         this text
+USAGE
+}
+
+# config_parse <file> — config is data, never code: KEY=value lines read with
+# read/case (spec §5.2, never eval'd; spec §6). Populates QLAUDE_* honoring
+# precedence flags > QLAUDE_* env > file > default. Corrupted config gets a
+# fix message pointing at qlaude setup, never a crash.
+config_parse() {
+    if [ "$#" -ne 1 ]; then
+        err "internal: config_parse needs one file argument"
+        return "$EXIT_USAGE"
+    fi
+    _file=$1
+    if [ ! -f "$_file" ]; then
+        err "no config at $_file — run: qlaude setup"
+        return "$EXIT_USAGE"
+    fi
+
+    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk=''
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case $_line in
+            '' | '#'*) continue ;;
+        esac
+        case $_line in
+            *=*) ;;
+            *)
+                err "config corrupted ('$_line' is not KEY=value) — run: qlaude setup"
+                return "$EXIT_USAGE"
+                ;;
+        esac
+        _key=${_line%%=*}
+        case $_key in
+            '' | *[!A-Z0-9_]*)
+                err "config corrupted ('$_line' is not KEY=value) — run: qlaude setup"
+                return "$EXIT_USAGE"
+                ;;
+        esac
+        _val=${_line#*=}
+        case $_key in
+            QLAUDE_ENDPOINT) _ep=$_val ;;
+            QLAUDE_MODEL) _md=$_val ;;
+            QLAUDE_AUTH) _au=$_val ;;
+            QLAUDE_CONTEXT_TOKENS) _ct=$_val ;;
+            QLAUDE_EFFORT) _ef=$_val ;;
+            QLAUDE_CLAUDE_BIN) _cb=$_val ;;
+            QLAUDE_TOKEN) _tk=$_val ;;
+            *) : ;; # unknown but well-formed keys are forward-compatible
+        esac
+    done <"$_file"
+
+    # precedence: an already-set (non-empty) QLAUDE_* env beats the file
+    if [ -z "${QLAUDE_ENDPOINT:-}" ]; then QLAUDE_ENDPOINT=$_ep; fi
+    if [ -z "${QLAUDE_MODEL:-}" ]; then QLAUDE_MODEL=$_md; fi
+    if [ -z "${QLAUDE_AUTH:-}" ]; then QLAUDE_AUTH=$_au; fi
+    if [ -z "${QLAUDE_CONTEXT_TOKENS:-}" ]; then QLAUDE_CONTEXT_TOKENS=$_ct; fi
+    if [ -z "${QLAUDE_EFFORT:-}" ]; then QLAUDE_EFFORT=$_ef; fi
+    if [ -z "${QLAUDE_CLAUDE_BIN:-}" ]; then QLAUDE_CLAUDE_BIN=$_cb; fi
+    if [ -z "${QLAUDE_TOKEN:-}" ]; then QLAUDE_TOKEN=$_tk; fi
+
+    case $QLAUDE_AUTH in
+        '' | bearer | api-key) ;;
+        *)
+            err "config corrupted (unknown auth style '$QLAUDE_AUTH') — run: qlaude setup"
+            return "$EXIT_USAGE"
+            ;;
+    esac
+    QLAUDE_AUTH=${QLAUDE_AUTH:-bearer}
+    QLAUDE_CONTEXT_TOKENS=${QLAUDE_CONTEXT_TOKENS:-262144}
+    QLAUDE_EFFORT=${QLAUDE_EFFORT:-medium}
+
+    if [ -z "$QLAUDE_ENDPOINT" ]; then
+        err "QLAUDE_ENDPOINT missing — run: qlaude setup"
+        return "$EXIT_USAGE"
+    fi
+    case $QLAUDE_ENDPOINT in
+        */v1)
+            err "warning: stripped trailing /v1 from endpoint — Claude Code appends /v1/messages itself (see README Setup block)"
+            QLAUDE_ENDPOINT=${QLAUDE_ENDPOINT%/v1}
+            ;;
+    esac
+    if [ -z "$QLAUDE_MODEL" ]; then
+        err "QLAUDE_MODEL missing — run: qlaude setup"
+        return "$EXIT_USAGE"
+    fi
+    return 0
+}
+
+# Command bodies below are dispatch placeholders until their tasks land
+# (T3 launcher, T4 wizard, T5 gauntlet, T6 ensure-path/config).
+not_implemented() {
+    err "'$1' is not available in this build yet — see the qlaude issue tracker for its task"
+    return "$EXIT_PREREQ"
+}
+
+cmd_launch() { not_implemented launch; }
+cmd_setup() { not_implemented setup; }
+cmd_doctor() { not_implemented doctor; }
+cmd_config() { not_implemented config; }
+cmd_ensure_path() { not_implemented ensure-path; }
+
+main() {
+    _cmd=${1:-}
+    case $_cmd in
+        '' | launch) cmd_launch ;;
+        setup) cmd_setup ;;
+        doctor) cmd_doctor ;;
+        config) cmd_config ;;
+        ensure-path) cmd_ensure_path ;;
+        --version | -V) printf 'qlaude %s\n' "$QLAUDE_VERSION" ;;
+        --help | -h | help) usage ;;
+        *)
+            err "unknown command '$_cmd'"
+            usage >&2
+            return "$EXIT_USAGE"
+            ;;
+    esac
+}
+
+# Run only as a program; sourcing this file (tests, later commands) exposes
+# functions without executing main.
+if [ "$(basename -- "$0")" = qlaude ]; then
+    main "$@"
+fi

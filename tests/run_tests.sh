@@ -1,0 +1,55 @@
+#!/bin/sh
+# Offline suite entry point (plan T1): starts the auth-enforcing stub,
+# exports CI env, runs every tests/test_*.sh, prints per-test PASS/FAIL,
+# exits non-zero on any failure. No real endpoints, ever.
+set -u
+
+here=$(cd "$(dirname "$0")" && pwd)
+
+tmp=$(mktemp -d)
+stub_pid=''
+cleanup() {
+    [ -n "$stub_pid" ] && kill "$stub_pid" 2>/dev/null
+    wait "$stub_pid" 2>/dev/null
+    rm -rf "$tmp"
+    return 0
+}
+trap cleanup EXIT
+
+# --- start stub, wait for it to publish its port (bounded by curl -m logic)
+portfile="$tmp/stub.port"
+export QLAUDE_STUB_PORTFILE="$portfile"
+export QLAUDE_CI_TOKEN='qlaude-ci-dummy-token-8f31'
+export QLAUDE_AUTH='bearer'
+export QLAUDE_STUB=1
+python3 "$here/stub_server.py" &
+stub_pid=$!
+
+i=0
+while [ "$i" -lt 50 ] && [ ! -s "$portfile" ]; do
+    i=$((i + 1))
+    sleep 0.1
+done
+if [ ! -s "$portfile" ]; then
+    echo "FAIL stub: did not start" >&2
+    exit 1
+fi
+QLAUDE_STUB_PORT=$(cat "$portfile")
+export QLAUDE_STUB_PORT
+
+# --- run suites
+fail=0
+for suite in "$here"/test_*.sh; do
+    [ -e "$suite" ] || { echo "FAIL no test suites found" >&2; exit 1; }
+    echo "--- $(basename "$suite")"
+    if ! sh "$suite"; then
+        fail=1
+    fi
+done
+
+if [ "$fail" -eq 0 ]; then
+    echo "ALL SUITES PASS"
+else
+    echo "SUITE FAILURES PRESENT" >&2
+fi
+exit "$fail"
