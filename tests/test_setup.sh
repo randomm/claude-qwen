@@ -125,6 +125,81 @@ st=$?
 if [ "$st" -eq 1 ] && printf '%s\n' "$out" | grep -qi 'usage'; then st=0; else st=1; fi
 t "unknown flag: usage + exit 1" 0 $st
 
+# 8b (owner UX feedback): the wizard must INTRODUCE itself and ask the
+# endpoint BEFORE the token — a blind "token?" with zero context is a bug.
+# Non-TTY case pins the intro line (printed before the token gate).
+out=$(run_setup </dev/null 2>&1)
+if printf '%s\n' "$out" | grep -q 'config.env'; then st=0; else st=1; fi
+t "wizard intro names the config file" 0 $st
+if printf '%s\n' "$out" | grep -q '0600'; then st=0; else st=1; fi
+t "wizard intro states 0600 storage (A4 promise)" 0 $st
+# PTY case pins the prompt ORDER: endpoint URL before the token prompt.
+# script(1) if present, else a python3 pty driver (python3 is already a
+# hard harness prerequisite), else honest SKIP — never a silent pass.
+_pty_run() { # argv: cmd... — child gets a pty; our stdin is fed to it
+    python3 -c '
+import os, pty, sys
+inp = os.read(0, 65536)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+try:
+    os.write(fd, inp)
+except OSError:
+    pass
+out = b""
+while True:
+    try:
+        b = os.read(fd, 4096)
+    except OSError:
+        break
+    if not b:
+        break
+    out += b
+try:
+    st = os.waitpid(pid, 0)[1]
+except ChildProcessError:
+    sys.stdout.buffer.write(out); sys.stdout.buffer.flush(); sys.exit(0)
+sys.stdout.buffer.write(out)
+sys.stdout.buffer.flush()
+sys.exit(st >> 8 if (st & 0xFF) == 0 else 1)
+' "$@"
+}
+if command -v python3 >/dev/null 2>&1; then
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+        _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
+            QLAUDE_CONFIG_DIR="$tmp/pconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+            sh "$tool" setup >"$tmp/pty.out" 2>&1 || true
+    _e=$(grep -n 'endpoint URL' "$tmp/pty.out" | head -1 | cut -d: -f1)
+    _tk=$(grep -n 'token for http://127.0.0.1:1' "$tmp/pty.out" | head -1 | cut -d: -f1)
+    # -le: with the cursor-preserving prompts both can land on ONE line;
+    # endpoint must never come AFTER the token prompt.
+    if [ -n "$_e" ] && [ -n "$_tk" ] && [ "$_e" -le "$_tk" ]; then st=0; else st=1; fi
+    t "interactive: endpoint asked BEFORE token, token prompt names it" 0 $st
+    # cursor UX, proven structurally: with no input pending between the
+    # two reads, the NEXT qlaude output must follow the endpoint prompt
+    # on the SAME line (no newline emitted after a prompt).
+    if tr -d '\r' <"$tmp/pty.out" | grep -q 'route to): qlaude: token'; then
+        st=0
+    else
+        st=1
+    fi
+    t "endpoint prompt keeps the cursor on its own line" 0 $st
+    # empty model at the model prompt: must refuse to save, not write a
+    # QLAUDE_MODEL= empty value (guard is a new T7-adjacent fix).
+    printf 'http://127.0.0.1:1\nptytoken-9x\n\n' | \
+        _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
+            QLAUDE_CONFIG_DIR="$tmp/pconf2" QLAUDE_INSTALL_DIR="$tmp/bin" \
+            sh "$tool" setup >"$tmp/pty2.out" 2>&1
+    _rc=$?
+    if [ "$_rc" -ne 0 ] && grep -q 'break every launch' "$tmp/pty2.out"; then st=0; else st=1; fi
+    t "empty model refused (no empty-model config saved)" 0 $st
+    if [ ! -f "$tmp/pconf2/config.env" ]; then st=0; else st=1; fi
+    t "empty model: config.env NOT written (anti-vacuous)" 0 $st
+else
+    echo "SKIP interactive pty tests (python3 missing)"
+fi
+
 # 9. Terminal escape injection (security review): a hostile endpoint's
 # model ids are SERVER-CONTROLLED — the discovered-models line must not
 # carry raw ESC/CR/LF into the terminal. A dedicated shim answers the

@@ -23,6 +23,8 @@ if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_E
 C_RESET=''
 [ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
+# prompt — interactive question, cursor stays on the prompt line (unlike err).
+prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
 usage() {
     cat <<'USAGE'
 usage: qlaude [command] [args...]
@@ -347,6 +349,7 @@ cmd_setup() {
         shift
     done
     _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
+    err "qlaude setup: configures endpoint/model/token into $_cf (mode 0600, token never printed)"
     # Re-setup: preview existing values (token value never previewed, A4).
     if [ -f "$_cf" ]; then
         while IFS= read -r _line || [ -n "$_line" ]; do
@@ -370,30 +373,27 @@ cmd_setup() {
     if ! command -v "$_cb" >/dev/null 2>&1; then
         err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
-    # token FIRST (before any probe), never echoed (C9): stdin flag or prompt.
-    if [ -n "$_tok_stdin" ]; then
-        IFS= read -r _tok || _tok=''
+    # endpoint first, so the token prompt can name what the token is FOR
+    # (owner UX feedback). The token is still collected before the model
+    # probe, which is what §5.4 actually mandates.
+    if [ -z "$_ep" ]; then
+        if [ ! -t 0 ] || [ -n "$_y" ]; then err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"; usage_setup >&2; return 1; fi
+        prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
+        IFS= read -r _ep || _ep=''
     fi
+    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
+    if [ -n "$_tok_stdin" ]; then IFS= read -r _tok || _tok=''; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
-        err "token (input hidden): "
+        prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
         # §5.4 mandates read -rs: not strict POSIX, but dash/bash/macOS sh
         # shellcheck disable=SC3045
         IFS= read -rs _tok || _tok=''
+        printf '\n' >&2
     fi
     if [ -z "$_tok" ]; then
         err "no token (use --token-stdin or QLAUDE_TOKEN) — setup needs it before the model probe"
         usage_setup >&2
         return 1
-    fi
-    # endpoint; then the authed model probe (token in hand first, §5.4).
-    if [ -z "$_ep" ]; then
-        if [ ! -t 0 ] || [ -n "$_y" ]; then
-            err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"
-            usage_setup >&2
-            return 1
-        fi
-        err "endpoint URL: "
-        IFS= read -r _ep || _ep=''
     fi
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
@@ -404,23 +404,17 @@ cmd_setup() {
         err "note: model probe unreachable at $_epd/v1/models — supply --model"
     fi
     if [ -z "$_md" ]; then
-        if [ ! -t 0 ] || [ -n "$_y" ]; then
-            err "model required (--model or QLAUDE_MODEL)"
-            usage_setup >&2
-            return 1
-        fi
-        err "model: "
+        if [ ! -t 0 ] || [ -n "$_y" ]; then err "model required (--model or QLAUDE_MODEL)"; usage_setup >&2; return 1; fi
+        prompt "model (id as the server knows it, e.g. from the discovered list): "
         IFS= read -r _md || _md=''
+        if [ -z "$_md" ]; then err "model required (--model or QLAUDE_MODEL) — empty model would break every launch"; usage_setup >&2; return 1; fi
     fi
     # auth: bearer only (§5.2 / C7).
     _au=${_au:-bearer}
-    case $_au in
-        bearer) ;;
-        *)
-            err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
-            return 1
-            ;;
-    esac
+    if [ "$_au" != bearer ]; then
+        err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
+        return 1
+    fi
     if [ -z "$_ct" ]; then
         if [ -n "$_y" ]; then
             err "warning: --context not set — verify it against your server's max-model-len; defaulting to 262144"
