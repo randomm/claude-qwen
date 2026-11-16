@@ -129,8 +129,7 @@ t "unknown flag: usage + exit 1" 0 $st
 # endpoint BEFORE the token — a blind "token?" with zero context is a bug.
 # Non-TTY case pins the intro line (printed before the token gate).
 out=$(run_setup </dev/null 2>&1)
-if printf '%s\n' "$out" | grep -q 'config.env'; then st=0; else st=1; fi
-t "wizard intro names the config file" 0 $st
+if printf '%s\n' "$out" | grep -q 'config.env'; then st=0; else st=1; fi; t "wizard intro names the config file" 0 $st
 if printf '%s\n' "$out" | grep -q '0600'; then st=0; else st=1; fi
 t "wizard intro states 0600 storage (A4 promise)" 0 $st
 # PTY case pins the prompt ORDER: endpoint URL before the token prompt.
@@ -169,12 +168,12 @@ sys.exit(st >> 8 if (st & 0xFF) == 0 else 1)
 ' "$@"
 }
 if command -v python3 >/dev/null 2>&1; then
-    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+    # feed: ep, token, model, Enter@context, Enter@effort
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n\n\n' | \
         _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/pconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
             sh "$tool" setup >"$tmp/pty.out" 2>&1 || true
-    _e=$(grep -n 'endpoint URL' "$tmp/pty.out" | head -1 | cut -d: -f1)
-    _tk=$(grep -n 'token for http://127.0.0.1:1' "$tmp/pty.out" | head -1 | cut -d: -f1)
+    _e=$(grep -n 'endpoint URL' "$tmp/pty.out" | head -1 | cut -d: -f1); _tk=$(grep -n 'token for http://127.0.0.1:1' "$tmp/pty.out" | head -1 | cut -d: -f1)
     # -le: with the cursor-preserving prompts both can land on ONE line;
     # endpoint must never come AFTER the token prompt.
     if [ -n "$_e" ] && [ -n "$_tk" ] && [ "$_e" -le "$_tk" ]; then st=0; else st=1; fi
@@ -213,7 +212,7 @@ fi
 # /bin/sh IS dash; the host /bin/sh being bash hid this until T8). Pin the
 # stty-fallback path on every host: same pty scenario with child = dash.
 if command -v python3 >/dev/null 2>&1 && command -v dash >/dev/null 2>&1; then
-    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n\n\n' | \
         _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/dconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
             dash "$tool" >"$tmp/dpty.out" 2>&1
@@ -269,8 +268,9 @@ rd(b"token for")
 time.sleep(0.15)
 os.write(fd, b"ptytoken-9x\n")
 rd(b"qlaude: model")
-os.write(fd, b"mymodel\n")
-rd(b"saved")
+os.write(fd, b"mymodel\n"); rd(b"context window")
+os.write(fd, b"\n"); rd(b"effort")
+os.write(fd, b"\n"); rd(b"saved")
 sys.stdout.buffer.write(log)
 sys.stdout.buffer.flush()
 try:

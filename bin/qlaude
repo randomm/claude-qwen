@@ -30,9 +30,7 @@ _hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
     # shellcheck disable=SC3045
     if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
     else
-        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' INT TERM
-        IFS= read -r "$1"; _hr_st=$?
-        trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
+        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' INT TERM; IFS= read -r "$1"; _hr_st=$?; trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
     fi
 }
 usage() {
@@ -379,15 +377,16 @@ cmd_setup() {
         err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
     # endpoint first, so the token prompt can name what the token is FOR
-    # (owner UX feedback). The token is still collected before the model
-    # probe, which is what §5.4 actually mandates.
+    # (owner UX feedback); token still precedes the probe, per §5.4.
     if [ -z "$_ep" ]; then
         if [ ! -t 0 ] || [ -n "$_y" ]; then err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"; usage_setup >&2; return 1; fi
         prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
         IFS= read -r _ep || _ep=''
     fi
     # token before any probe, never echoed (C9): stdin flag or hidden prompt.
-    if [ -n "$_tok_stdin" ]; then IFS= read -r _tok || _tok=''; fi
+    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
+    # newline-less final line (vault/pipeline idiom — EOF is not discard).
+    if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
         prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
         _hidden_read _tok || _tok=''
@@ -418,12 +417,13 @@ cmd_setup() {
         err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
         return 1
     fi
+    # §5.4 questions — only when still unset and interactive; -y keeps flags.
+    if [ -z "$_ct" ] && [ -z "$_y" ] && [ -t 0 ]; then prompt "context window tokens (= your server's --max-model-len; Enter = 262144): "; IFS= read -r _ctv || _ctv=''; [ -n "$_ctv" ] && _ct="$_ctv"; fi
     if [ -z "$_ct" ]; then
-        if [ -n "$_y" ]; then
-            err "warning: --context not set — verify it against your server's max-model-len; defaulting to 262144"
-        fi
+        [ -n "$_y" ] && err "warning: --context not set — verify it against your server's max-model-len; defaulting to 262144"
         _ct=262144
     fi
+    if [ -z "$_ef" ] && [ -z "$_y" ] && [ -t 0 ]; then prompt "reasoning effort low/medium/high/xhigh (Enter = medium): "; IFS= read -r _efv || _efv=''; [ -n "$_efv" ] && _ef="$_efv"; fi
     _ef=${_ef:-medium}
     # save 0600, atomic (temp + mv, §5.4)
     if ! mkdir -p "$QLAUDE_CONFDIR_RESOLVED"; then

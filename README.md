@@ -25,7 +25,7 @@ itself — still works and is documented below; `qlaude` is not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
-qlaude setup        # asks: endpoint (NO trailing /v1), token (hidden), model
+qlaude setup        # asks: endpoint (NO trailing /v1), token (hidden), model, context, effort
 qlaude doctor       # five checks: prereqs, /v1/messages, claude, tools, info
 qlaude              # launches claude with the Setup exports + SYSTEM-PROMPT.md
 qlaude ensure-path  # optional: add qlaude to PATH in new terminals
