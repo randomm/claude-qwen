@@ -66,6 +66,8 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="<your-model-name>"    # Code also sends
                                                             # to the haiku role
 export CLAUDE_CODE_EFFORT_LEVEL=medium                      # accepted values below
 export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144                # = server --max-model-len
+export CLAUDE_CODE_AUTO_MODE_MODEL="<your-model-name>"      # pin the auto-mode
+export CLAUDE_CODE_BG_CLASSIFIER_MODEL="<your-model-name>"  # safety classifiers too
 ```
 
 Use `ANTHROPIC_AUTH_TOKEN`: it sends `Authorization: Bearer ...`. Do **not**
@@ -86,6 +88,7 @@ setup was broken, so old errors keep appearing.
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | Claude Code routes some traffic (background tasks like session titles, plus `/model` picks) to roles named after Anthropic's model family — Opus, Sonnet and Haiku are Anthropic model names. Pin all three to your model, or those calls ask for a `claude-haiku-*` model your server does not have | background calls fail |
 | `CLAUDE_CODE_EFFORT_LEVEL` | Reasoning effort. Claude Code's own levels are `low/medium/high/xhigh`, but vLLM validates the field against its own list — `low`, `medium`, `xhigh` — so `high` is rejected: a name mismatch between the two products, not a typo on your side | a rejected value fails the request with HTTP 400 listing vLLM's accepted values |
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Declares the real context window for model ids Claude Code does not recognize | compaction triggers at the assumed 1M; requests fail with HTTP 400 past the server's real limit. Never set it above `--max-model-len` |
+| `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model on your endpoint, falls back, and shows the auto-mode eligibility notice once per day. See [Auto mode](#auto-mode-and-the-safety-classifier) |
 
 ## Verify, in this order
 
@@ -153,7 +156,8 @@ classifier runs as Claude Code's own model calls through your base URL —
 **your server makes the decisions**, billed as ordinary tokens on your box —
 and the notice stays dismissed.
 
-To skip the notice and name the decision-maker explicitly:
+The two classifier exports are already in the [Setup](#setup) block; they
+name the decision-maker explicitly and skip the notice:
 
 ```bash
 export CLAUDE_CODE_AUTO_MODE_MODEL="<your-model-name>"      # auto-mode decisions
