@@ -21,8 +21,9 @@ This README is endpoint-agnostic: `<your-endpoint>`, `<your-model-name>` and
 2. vLLM ≥ 0.11.1 serving one model (this guide was verified against vLLM
    0.33). Any open model works; examples here use a Qwen model. Start it with
    the server flags from the [checklist](#server-side-checklist-vllm).
-3. An access token for the server: vLLM checks tokens from its `--api-key`
-   list when configured; when auth is disabled, any non-empty string works.
+3. An access token for the server: if vLLM was started with `--api-key`, the
+   token must be one of those; if auth is not enforced, no particular value
+   is checked.
 
 ## How it works
 
@@ -105,7 +106,7 @@ curly quotes from chat-pasting, hidden characters, or a mangled token.
   read this model family's tool-call syntax; the parser must match the model
   (for example `qwen3_coder` or `hermes` for Qwen agent models). Other model
   families have their own parser names — see
-  [vLLM's tool-choice docs](https://docs.vllm.ai/en/latest/features/tool_choice.html).
+  [vLLM's tool-calling docs](https://docs.vllm.ai/en/latest/features/tool_calling/).
   Without a parser, tool calls come back as ordinary text and the agent does
   nothing useful.
 - `--served-model-name <your-model-name>` must exactly match
