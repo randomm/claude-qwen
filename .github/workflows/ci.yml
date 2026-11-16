@@ -66,9 +66,13 @@ jobs:
           [ -s "$RUNNER_TEMP/stub.port" ] || { echo 'stub did not start' >&2; exit 1; }
           echo "STUB_PORT=$(cat "$RUNNER_TEMP/stub.port")" >> "$GITHUB_ENV"
       - name: installer from this commit (checksum-verified fetch)
+        # On pull_request events GITHUB_SHA is the merge commit, which
+        # raw.githubusercontent does not serve — fetch the PR head commit.
+        env:
+          FETCH_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/claude-qwen \
-          QLAUDE_REF="${GITHUB_SHA}" \
+          QLAUDE_REF="$FETCH_REF" \
           QLAUDE_INSTALL_DIR="$RUNNER_TEMP/bin" \
             sh install.sh
           test -x "$RUNNER_TEMP/bin/qlaude"
@@ -93,6 +97,8 @@ jobs:
       - name: install claude code (for the doctor probe)
         run: npm install -g @anthropic-ai/claude-code@2.1.325
       - name: fresh chain re-run under dash in a clean HOME
+        env:
+          FETCH_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           CH=$(mktemp -d)
           QLAUDE_CI_TOKEN=qlaude-ci-dummy-token-8f31 \
@@ -102,7 +108,7 @@ jobs:
           STUB_PORT=$(cat "$CH/stub.port")
           HOME="$CH" QLAUDE_CI_TOKEN=qlaude-ci-dummy-token-8f31 \
           QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/claude-qwen \
-          QLAUDE_REF="${GITHUB_SHA}" \
+          QLAUDE_REF="$FETCH_REF" \
           QLAUDE_INSTALL_DIR="$CH/bin" QLAUDE_CONFIG_DIR="$CH/conf" \
           STUB_PORT="$STUB_PORT" CLAUDE_BIN="$(command -v claude)" \
           dash -c 'sh "$GITHUB_WORKSPACE/install.sh" \
