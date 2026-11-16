@@ -7,12 +7,17 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 hash_one() {
+    # Status must come from the hasher, not the formatter: an unreadable or
+    # missing payload fails here, never as an empty hash line.
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | cut -d' ' -f1
+        _out=$(sha256sum "$1" 2>/dev/null) || return 2
+        printf '%s\n' "${_out%% *}"
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        _out=$(shasum -a 256 "$1" 2>/dev/null) || return 2
+        printf '%s\n' "${_out%% *}"
     elif command -v openssl >/dev/null 2>&1; then
-        openssl dgst -sha256 "$1" | awk '{print $NF}'
+        _out=$(openssl dgst -sha256 "$1" 2>/dev/null) || return 2
+        printf '%s\n' "${_out##* }"
     else
         echo "gen-checksum: no sha256 tool (need sha256sum, shasum or openssl)" >&2
         return 2
