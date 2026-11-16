@@ -14,6 +14,51 @@ This README is endpoint-agnostic: `<your-endpoint>`, `<your-model-name>` and
 `<your-token>` are placeholders — replace them with your server URL, your
 `--served-model-name`, and your server's access token.
 
+## Quickstart (qlaude)
+
+`qlaude` is the launcher this repo ships: a single POSIX-sh script that
+stores your endpoint/model/token in `~/.config/qlaude/config.env` (mode
+0600; macOS keeps the token in the keychain instead), runs the checks
+below as `qlaude doctor`, and launches Claude Code with every export from
+the [Setup](#setup) block set for you. The manual path — the Setup block
+itself — still works and is documented below; `qlaude` is not required.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+qlaude setup        # asks: endpoint (NO trailing /v1), token (hidden), model
+qlaude doctor       # five checks: prereqs, /v1/messages, claude, tools, info
+qlaude              # launches claude with the Setup exports + SYSTEM-PROMPT.md
+qlaude ensure-path  # optional: add qlaude to PATH in new terminals
+```
+
+- The installer verifies a sha256 checksum of everything it fetches
+  against `install.sha256` before executing it.
+- The token is never echoed, never printed, never passed in command-line
+  arguments; `qlaude config` and `qlaude doctor` show state, not the
+  value.
+- `qlaude doctor` mirrors [Verify, in this order](#verify-in-this-order)
+  plus a real tool-use probe, and is what `qlaude setup` runs at the end.
+- `qlaude` obeys the same prerequisites and the same server-side
+  [checklist](#server-side-checklist-vllm) as the manual path.
+- Design and rationale: [docs/superpowers/specs/2026-11-16-qlaude-design.md](docs/superpowers/specs/2026-11-16-qlaude-design.md).
+
+### Uninstall
+
+No subcommand — three lines (the last is macOS-only, removing the
+keychain entry):
+
+```bash
+rm "$HOME/.local/bin/qlaude"
+rm -rf "$HOME/.config/qlaude"
+security delete-generic-password -s qlaude   # macOS only
+```
+
+If you installed with `QLAUDE_INSTALL_DIR`/`QLAUDE_CONFIG_DIR` set, drop
+those files from wherever they went instead. If you ran
+`qlaude ensure-path`, delete the `# qlaude PATH` … `# end qlaude PATH`
+marker block from the file it named (`~/.profile` by default,
+`~/.zprofile` for zsh and macOS).
+
 ## Prerequisites
 
 1. Node.js v18+ (ships `npm`), then Claude Code:
