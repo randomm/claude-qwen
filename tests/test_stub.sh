@@ -21,18 +21,27 @@ tok="$QLAUDE_CI_TOKEN"
 post_body='{"model":"stub-model","max_tokens":8,"messages":[{"role":"user","content":"OK"}]}'
 
 code() { # code <method> <path> <token|-> <version|->
+    # House rule C6: bearer credentials reach curl via stdin config
+    # (--config -), never argv.
     _m=$1 _p=$2 _t=$3 _v=$4
-    _hdrs=''
-    [ "$_t" != '-' ] && _hdrs="Authorization: Bearer $_t"
-    _v2=''
-    [ "$_v" != '-' ] && _v2="anthropic-version: $_v"
     if [ "$_m" = POST ]; then
-        curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "$base$_p" \
-            ${_hdrs:+-H} ${_hdrs:+"$_hdrs"} ${_v2:+-H} ${_v2:+"$_v2"} \
-            -H 'content-type: application/json' -d "$post_body"
+        # curl config values are quote-parsed: the JSON's own double quotes
+        # must be backslash-escaped before they enter the config stream.
+        _d=$(printf '%s' "$post_body" | sed 's/"/\\"/g')
+        curl -s -m 5 -o /dev/null -w '%{http_code}' --config - <<EOF
+url = "$base$_p"
+request = "POST"
+header = "content-type: application/json"
+$([ "$_v" != '-' ] && printf 'header = "anthropic-version: %s"\n' "$_v")
+$([ "$_t" != '-' ] && printf 'header = "Authorization: Bearer %s"\n' "$_t")
+data-raw = "$_d"
+EOF
     else
-        curl -s -m 5 -o /dev/null -w '%{http_code}' "$base$_p" \
-            ${_hdrs:+-H} ${_hdrs:+"$_hdrs"} ${_v2:+-H} ${_v2:+"$_v2"}
+        curl -s -m 5 -o /dev/null -w '%{http_code}' --config - <<EOF
+url = "$base$_p"
+$([ "$_v" != '-' ] && printf 'header = "anthropic-version: %s"\n' "$_v")
+$([ "$_t" != '-' ] && printf 'header = "Authorization: Bearer %s"\n' "$_t")
+EOF
     fi
 }
 
@@ -50,11 +59,41 @@ if [ "$(code GET /v1/models '-' 2023-06-01)" = 401 ]; then st=0; else st=1; fi
 t "models: missing token -> 401" 0 $st
 
 # echo contract: the response carries the last user text (spec §5.8)
-resp=$(curl -s -m 5 -X POST "$base/v1/messages" -H "Authorization: Bearer $tok" \
-    -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
-    -d '{"model":"stub-model","max_tokens":8,"messages":[{"role":"user","content":"ping-qlaude"}]}')
+resp=$(curl -s -m 5 --config - <<EOF
+url = "$base/v1/messages"
+header = "anthropic-version: 2023-06-01"
+header = "content-type: application/json"
+header = "Authorization: Bearer $tok"
+data = "{\"model\":\"stub-model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping-qlaude\"}]}"
+write-out = "%{http_code}"
+silent
+EOF
+)
 printf '%s' "$resp" | grep -q 'ping-qlaude'
 st=$?
 t "messages: echoes last user text" 0 $st
+
+# argv audit (C6/A4 idiom, deterministic): a PATH shim records every curl
+# argv — the token must never appear there; curl must carry it via stdin
+# config (--config -). Deterministic stand-in for a ps sampler race.
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+mkdir -p "$tmpdir/shim"
+real_curl=$(command -v curl)
+# Single quotes are intentional: the shim's printf format and $@ must be
+# written literally into the shim script, not expanded here.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' \
+    'printf '"'"'%s\n'"'"' "$@" >> "$SHIM_LOG"' \
+    "exec $real_curl \"\$@\"" >"$tmpdir/shim/curl"
+chmod +x "$tmpdir/shim/curl"
+: >"$tmpdir/curl.argv"
+SHIM_LOG="$tmpdir/curl.argv" PATH="$tmpdir/shim:$PATH" code POST /v1/messages "$tok" 2023-06-01 >/dev/null 2>&1
+SHIM_LOG="$tmpdir/curl.argv" PATH="$tmpdir/shim:$PATH" code GET /v1/models "$tok" 2023-06-01 >/dev/null 2>&1
+if grep -qF "$tok" "$tmpdir/curl.argv"; then
+    t "curl argv: token never in argv (stdin config only)" 1 1
+else
+    t "curl argv: token never in argv (stdin config only)" 0 0
+fi
 
 exit "$fail"

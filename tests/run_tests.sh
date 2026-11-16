@@ -11,7 +11,10 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 2
 fi
 
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) || {
+    echo "qlaude: prerequisite failure: mktemp -d failed (TMPDIR unusable?)" >&2
+    exit 2
+}
 stub_pid=''
 # Invoked indirectly via trap on exit.
 # shellcheck disable=SC2329
