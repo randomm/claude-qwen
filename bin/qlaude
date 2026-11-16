@@ -334,30 +334,53 @@ cmd_setup() {
 # shellcheck disable=SC2034  # the set is the spec §5.3 contract, read below
 QLAUDE_EXPORTS='ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS'
 
-# token_resolve — C6 ladder: QLAUDE_TOKEN env/file beats keychain; on
-# macOS the keychain is tried next (security -w prints to stdout: the token
-# is never in argv, only the service name is). Echoes the token.
+# abs_exec <path-or-name> — echo an absolute executable path. A value with
+# a slash is resolved against the CWD and absolutized (a CWD-relative exec
+# string would let whoever controls the directory hijack the launch).
+abs_exec() {
+    _c=$1
+    case $_c in
+        */*)
+            if [ ! -x "$_c" ]; then
+                return 1
+            fi
+            case $_c in
+                /*) printf '%s\n' "$_c" ;;
+                *)
+                    _d=$(cd "${_c%/*}" 2>/dev/null && pwd) || return 1
+                    printf '%s/%s\n' "$_d" "${_c##*/}"
+                    ;;
+            esac
+            ;;
+        *) command -v "$_c" ;;
+    esac
+}
+
+# token_resolve — C6 ladder per spec §5.3 step 2: on macOS the KEYCHAIN
+# comes first (security -w prints to stdout: the token is never in argv,
+# only the service name); the QLAUDE_TOKEN file/env value is the fallback
+# everywhere and the only source off-Darwin. Echoes the token.
 token_resolve() {
-    if [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf '%s' "$QLAUDE_TOKEN"
-        return 0
-    fi
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
-        _t=$(security find-generic-password -s qlaude -w 2>/dev/null) || return 1
+        _t=$(security find-generic-password -s qlaude -w 2>/dev/null) || _t=''
         if [ -n "$_t" ]; then
             printf '%s' "$_t"
             return 0
         fi
     fi
+    if [ -n "${QLAUDE_TOKEN:-}" ]; then
+        printf '%s' "$QLAUDE_TOKEN"
+        return 0
+    fi
     return 1
 }
 
 token_source() { # label only — never the value (A4)
-    if [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf 'file-or-env'
-    elif [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1 && \
+    if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1 && \
         security find-generic-password -s qlaude -w >/dev/null 2>&1; then
         printf 'keychain'
+    elif [ -n "${QLAUDE_TOKEN:-}" ]; then
+        printf 'file-or-env'
     else
         printf 'unset'
     fi
@@ -410,20 +433,25 @@ cmd_launch() {
 
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
         # A4: the list itself is the assertion target; token value redacted.
-        for _n in $QLAUDE_EXPORTS; do
-            case $_n in
-                ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY)
-                    err "export $_n=[redacted]"
-                    ;;
-                *)
-                    err "export $_n=$(printenv "$_n")"
-                    ;;
-            esac
-        done
+        # Values come from the shell's own parameters — never an external
+        # printenv, whose child would inherit the exported token (§5.3/A4).
+        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+        case $QLAUDE_AUTH in
+            bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;;
+            api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;;
+        esac
+        err "export ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
+        err "export ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
+        err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL"
+        err "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        err "export CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
+        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL"
+        err "export CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL"
+        err "export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
     fi
 
     _bin=${QLAUDE_CLAUDE_BIN:-claude}
-    _abs=$(command -v "$_bin") || {
+    _abs=$(abs_exec "$_bin") || {
         err "claude bin not found ('$_bin') — install Claude Code, or set QLAUDE_CLAUDE_BIN"
         return "$EXIT_CLI"
     }
