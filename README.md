@@ -139,7 +139,44 @@ curly quotes from chat-pasting, hidden characters, or a mangled token.
 | Long sessions die with "context length exceeded" | Claude Code assumed a 1M window; the server's is smaller | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (≤ `--max-model-len`) |
 | `Unexpected reasoning effort ... Supported types are ...` | effort value the server does not accept | `CLAUDE_CODE_EFFORT_LEVEL` to one of the values the error lists |
 | Model "writes" files but nothing changes | server has no tool-call parser, so tool calls arrived as text | `--tool-call-parser` at vLLM start |
+| "this session isn't eligible … not compatible with this update" | Anthropic's server-side auto-mode classifier can't reach a custom endpoint; this is a billing disclosure, not an error | press Enter once, or pin the classifier model (see [Auto mode](#auto-mode-and-the-safety-classifier)) |
 | ECONNREFUSED through a corporate or container proxy | Claude Code is a Node.js app: it ignores `*_proxy` variables unless `NODE_USE_ENV_PROXY=1`, and proxies can break its streaming responses | if the server is directly reachable, run `claude` with proxy variables unset; if you must traverse a proxy, set `NODE_USE_ENV_PROXY=1` plus `HTTPS_PROXY`, then test streaming with `claude -p` before trusting it |
+
+## Auto mode and the safety classifier
+
+Auto mode runs a safety classifier over actions (shell commands, network
+calls) before they execute. Anthropic's new no-charge *server-side* checks
+are a first-party service and never reach a session behind your own endpoint,
+so Claude Code shows a notice naming your server as "not compatible with this
+update". It is a billing disclosure, not an error: press Enter and the
+classifier runs as Claude Code's own model calls through your base URL —
+**your server makes the decisions**, billed as ordinary tokens on your box —
+and the notice stays dismissed.
+
+To skip the notice and name the decision-maker explicitly:
+
+```bash
+export CLAUDE_CODE_AUTO_MODE_MODEL="<your-model-name>"      # auto-mode decisions
+export CLAUDE_CODE_BG_CLASSIFIER_MODEL="<your-model-name>"  # background tasks
+```
+
+Verified November 2026: with these set (and `CLAUDE_CODE_AUTO_MODE_SERVER`
+unset), auto mode enabled and actions auto-approved, classifier served by the
+custom model. Internally, the classifier model resolves through the same
+model config as the main loop and falls back gracefully when the endpoint
+can't serve Anthropic's default classifier model.
+
+**Do not** set `CLAUDE_CODE_AUTO_MODE_SERVER=0` to silence the notice: it
+turns off the server checks and this build has no local fallback left, so
+auto mode quietly degrades to asking approval for every checked action.
+
+Two caveats:
+
+- The judge and the actor are the same model. Treat auto mode on a
+  self-hosted model as convenience, not a security boundary — use plan /
+  accept-edits modes for work you'd want an independent judge on.
+- To confirm the classifier rides your endpoint: watch the server log for an
+  extra `POST /v1/messages` while auto mode holds an action.
 
 ## If you want a gateway anyway
 
