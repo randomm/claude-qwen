@@ -41,6 +41,12 @@ jobs:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    # ONE config dir for installer + setup + doctor: SYSTEM-PROMPT.md is
+    # installed into QLAUDE_CONFIG_DIR, and doctor's step 0 requires it
+    # there (job-level env — step-level would let the installer and the
+    # doctor disagree, which is exactly what broke the first CI run).
+    env:
+      QLAUDE_CONFIG_DIR: ${{ runner.temp }}/conf
     steps:
       - uses: actions/checkout@v4
       - name: install claude code (official channel, pinned version)
@@ -77,16 +83,13 @@ jobs:
             sh install.sh
           test -x "$RUNNER_TEMP/bin/qlaude"
       - name: setup -y against the stub, then doctor (A2/A3)
-        env:
-          QLAUDE_CONFIG_DIR: ${{ runner.temp }}/conf
         run: |
           printf '%s\n' qlaude-ci-dummy-token-8f31 | \
             "$RUNNER_TEMP/bin/qlaude" setup -y --token-stdin \
               --endpoint "http://127.0.0.1:${STUB_PORT}" \
               --model stub-model \
               --claude-bin "$(command -v claude)"
-          QLAUDE_STUB=1 QLAUDE_CONFIG_DIR="${{ runner.temp }}/conf" \
-            "$RUNNER_TEMP/bin/qlaude" doctor
+          QLAUDE_STUB=1 "$RUNNER_TEMP/bin/qlaude" doctor
           # config must be 0600 (spec §5.2)
           test "$(ls -l "${{ runner.temp }}/conf/config.env" | cut -c2-10)" = "rw-------"
 
@@ -113,10 +116,8 @@ jobs:
           STUB_PORT="$STUB_PORT" CLAUDE_BIN="$(command -v claude)" \
           dash -c 'sh "$GITHUB_WORKSPACE/install.sh" \
             && printf %s\\n "$QLAUDE_CI_TOKEN" | "$QLAUDE_INSTALL_DIR/qlaude" setup -y --token-stdin --endpoint "http://127.0.0.1:$STUB_PORT" --model stub-model --claude-bin "$CLAUDE_BIN" \
-            && QLAUDE_STUB=1 "$QLAUDE_INSTALL_DIR/qlaude" doctor'
-          # and the launcher itself must parse+dispatch under dash:
-          dash -c 'QLAUDE_CONFIG_DIR="$QLAUDE_CONFIG_DIR" "$QLAUDE_INSTALL_DIR/qlaude" config >/dev/null' \
-            || { echo 'qlaude config failed under dash' >&2; exit 1; }
+            && QLAUDE_STUB=1 "$QLAUDE_INSTALL_DIR/qlaude" doctor \
+            && "$QLAUDE_INSTALL_DIR/qlaude" config >/dev/null'
 
   negative:
     runs-on: ubuntu-latest
