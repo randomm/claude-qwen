@@ -201,10 +201,14 @@ EOF
 }
 # step2/step3: isolated HOME per spawn (C7): user ~/.claude.json excluded.
 step2_claude() {
-    if _probe_claude "Reply with exactly: OK" 1 | grep -q OK; then
+    # §5.5: on failure the probe's own text is surfaced VERBATIM (auth/login/
+    # env diagnosis is doctor's job, not the user's rerun chore).
+    _o=$(_probe_claude "Reply with exactly: OK" 1)
+    if printf '%s\n' "$_o" | grep -q OK; then
         gline PASS 2 claude "echoed OK"; return 0
     fi
-    gline FAIL 2 claude "claude -p did not echo OK → rerun by hand to see its verbatim auth/login/env error"
+    gline FAIL 2 claude "claude -p did not echo OK — its verbatim output follows"
+    printf '%s\n' "$_o" >&2
     return "$EXIT_CLI"
 }
 step3_tools() {

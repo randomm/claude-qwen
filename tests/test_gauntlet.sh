@@ -153,8 +153,8 @@ if [ "$st" -eq 3 ]; then st=0; else st=1; fi
 t "404: unreachable after the one auto-fix → exit 3" 0 $st
 if printf '%s\n' "$out" | grep -q 'note: 404'; then st=0; else st=1; fi
 t "404 auto-fix: printed notice" 0 $st
-if printf '%s\n' "$out" | grep -qiE '/v1'; then st=0; else st=1; fi
-t "404: /v1 hint text" 0 $st
+if printf '%s\n' "$out" | grep -q 'corrected /v1 path'; then st=0; else st=1; fi
+t "404: /v1 hint text (hint phrase itself, not endpoint echo)" 0 $st
 _n=$(grep -c '^url = ' "$tmp/curl2.stdin")
 if [ "$_n" -eq 2 ]; then st=0; else st=1; fi
 t "404: exactly one retry attempted (2 requests, no more)" 0 $st
@@ -235,6 +235,47 @@ if printf '%s\n' "$_pb" | grep -q 'ENVAK=poison-inherited-key'; then st=1; else 
 t "probe env: inherited ANTHROPIC_API_KEY scrubbed" 0 $st
 if printf '%s\n' "$_pb" | grep -q "ENVAT=$QLAUDE_CI_TOKEN"; then st=0; else st=1; fi
 t "probe env: qlaude token exported into the probe child" 0 $st
+
+# 10d (review): step-2 failure must surface claude's output VERBATIM
+# (spec §5.5 step-2 column) — not defer to "rerun by hand".
+mkdir -p "$tmp/failbin"
+cat >"$tmp/failbin/claude" <<'SHIM3'
+#!/bin/sh
+[ "$1" = --version ] && exit 0
+echo "qlaude-test-login-fail-7z: not authenticated" >&2
+exit 1
+SHIM3
+chmod +x "$tmp/failbin/claude"
+out=$(env -i PATH="$tmp/failbin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp/poisonhome" \
+    QLAUDE_CONFIG_DIR="$conf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+    CURL_LOG="$tmp/curl5.argv" CURL_STDIN="$tmp/curl5.stdin" \
+    CLAUDE_LOG="$tmp/claude5.argv" QLAUDE_STUB=1 \
+    sh "$tool" doctor 2>&1)
+st=$?
+if [ "$st" -eq 4 ]; then st=0; else st=1; fi
+t "step 2 fail: exit 4 (cli)" 0 $st
+if printf '%s\n' "$out" | grep -qF 'qlaude-test-login-fail-7z: not authenticated'; then
+    st=0
+else
+    st=1
+fi
+t "step 2 fail: claude's error text surfaced verbatim" 0 $st
+if printf '%s\n' "$out" | grep -q '^PASS 2'; then st=1; else st=0; fi
+t "step 2 fail: no false PASS 2 (anti-vacuous)" 0 $st
+
+# 10e (review, plan T5 Review-Focus): every gauntlet curl carries -m.
+QLAUDE_STUB=1 run_doc >/dev/null 2>&1
+if grep -qxF -- '-m' "$tmp/curl.argv"; then st=0; else st=1; fi
+t "step 1 curl: -m bound present in argv" 0 $st
+
+# 10f (review): step-2 probe argv is pinned to the spec §5.5 contract
+# (-p <prompt> --model <M> --max-turns 1), scoped to the probe block.
+_probe_args=$(awk '/^-p$/{f=1} f{print} /^ENVAK=/{f=0}' "$tmp/claude.argv")
+for _a in '-p' 'Reply with exactly: OK' '--model' 'stub-model' '--max-turns' '1'; do
+    if ! printf '%s\n' "$_probe_args" | grep -qxF -- "$_a"; then st=1; break; fi
+    st=0
+done
+t "step 2 probe argv: -p prompt, --model, --max-turns 1 verbatim" 0 $st
 
 # 11. One line per step on stderr (rule: PASS/FAIL/SKIP <step>: cause→fix).
 QLAUDE_STUB=1 run_doc 2>"$tmp/doc.err" >/dev/null
