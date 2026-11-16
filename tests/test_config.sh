@@ -110,6 +110,35 @@ t "paths: CONFDIR matches spec §0" 0 $st
 if [ "${QLAUDE_INSTALLDIR_RESOLVED:-}" = "${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}" ]; then st=0; else st=1; fi
 t "paths: INSTALLDIR matches spec §0" 0 $st
 
+# 8b. Spec §0 override branches must be exercised too (house rule §8: a
+# guard that can never go red is not a guard). Re-source the tool with each
+# canonical input exported and assert the resolved value exactly.
+_check_path() { # <label> <expect> <var-name> <env-assignments...>
+    _lbl=$1 _exp=$2 _nm=$3
+    shift 3
+    # Source the tool in a clean-env sh and print the named resolved var by
+    # explicit case — never eval (house rule: config/names are not code).
+    # Single quotes intentional: the named-var case must run inside the
+    # sourced subshell, not expand in this suite.
+    # shellcheck disable=SC2016
+    _got=$(env -u QLAUDE_CONFIG_DIR -u XDG_CONFIG_HOME -u QLAUDE_INSTALL_DIR \
+        "$@" sh -c '
+            . "$1"
+            case $2 in
+                QLAUDE_CONFDIR_RESOLVED) printf "%s" "$QLAUDE_CONFDIR_RESOLVED" ;;
+                QLAUDE_INSTALLDIR_RESOLVED) printf "%s" "$QLAUDE_INSTALLDIR_RESOLVED" ;;
+                *) printf "" ;;
+            esac' _ "$root/bin/qlaude" "$_nm" 2>/dev/null)
+    if [ "$_got" = "$_exp" ]; then st=0; else st=1; fi
+    t "$_lbl" 0 $st
+}
+_check_path "paths: CONFDIR honours QLAUDE_CONFIG_DIR override" \
+    /cfg-override QLAUDE_CONFDIR_RESOLVED QLAUDE_CONFIG_DIR=/cfg-override
+_check_path "paths: CONFDIR honours XDG_CONFIG_HOME fallback" \
+    /xdg-base/qlaude QLAUDE_CONFDIR_RESOLVED XDG_CONFIG_HOME=/xdg-base
+_check_path "paths: INSTALLDIR honours QLAUDE_INSTALL_DIR override" \
+    /inst-override QLAUDE_INSTALLDIR_RESOLVED QLAUDE_INSTALL_DIR=/inst-override
+
 # 9. A corrupted line must never be echoed (it can carry a token line).
 # The corrupted line itself carries the token (spaces make the key invalid).
 printf 'QLAUDE_TOKEN = %s\n' "$QLAUDE_CI_TOKEN" >"$tmp/leaky"

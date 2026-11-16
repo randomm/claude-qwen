@@ -25,8 +25,9 @@ EXIT_CLI=4
 EXIT_TOOL=5
 
 # --- output discipline (spec C9): diagnostics on stderr only, plain when
-# NO_COLOR / TERM=dumb / non-TTY
-if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then
+# NO_COLOR / TERM=dumb / non-TTY. NO_COLOR is honoured on PRESENCE, not
+# value (no-color.org, the baseline C9 cites): NO_COLOR= must also silence.
+if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then
     C_ERR=''
 else
     C_ERR=$(printf '\033[31m')

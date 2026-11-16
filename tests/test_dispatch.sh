@@ -50,6 +50,22 @@ else
     t "NO_COLOR: no escape codes when NO_COLOR set" 0 0
 fi
 
+# 4c. clig.dev presence rule (spec C9 baseline): colour is suppressed
+# whenever NO_COLOR is PRESENT — even empty — and is emitted on a real TTY.
+# Exercised under a pty (script) so the non-TTY branch cannot mask it;
+# skipped with a visible SKIP line where 'script' does not exist.
+pty_run() { # run <cmd> with all its stdio on a fresh pty (python3 is a suite prerequisite)
+    python3 -c 'import pty,sys; pty.spawn(sys.argv[1:])' "$@"
+}
+err=$(TERM=xterm pty_run sh "$tool" frobnicate 2>/dev/null)
+if printf '%s' "$err" | grep -q "$(printf '\033')"; then st=0; else st=1; fi
+t "colour: real-TTY run emits ANSI diagnostics" 0 $st
+# NO_COLOR= is intentional: the presence rule must honour the empty value.
+# shellcheck disable=SC1007
+err=$(NO_COLOR= TERM=xterm pty_run sh "$tool" frobnicate 2>/dev/null)
+if printf '%s' "$err" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
+t "NO_COLOR present-but-empty: colour suppressed on TTY" 0 $st
+
 # 5. Known verbs are dispatched, not rejected as unknown: setup routes to the
 # dispatch placeholder (which its later task replaces).
 err=$(sh "$tool" setup </dev/null 2>&1)
