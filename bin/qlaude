@@ -145,16 +145,189 @@ config_parse() {
     return 0
 }
 
-# Command bodies not yet built are dispatch placeholders (T4 wizard,
-# T5 gauntlet, T6 ensure-path + full config).
+# Command bodies not yet built are dispatch placeholders (T5 gauntlet,
+# T6 ensure-path + full config).
 not_implemented() {
     err "'$1' is not available in this build yet — see the qlaude issue tracker for its task"
     return "$EXIT_PREREQ"
 }
 
-cmd_setup() { not_implemented setup; }
 cmd_doctor() { not_implemented doctor; }
 cmd_ensure_path() { not_implemented ensure-path; }
+
+# --- wizard (spec §5.4)
+usage_setup() {
+    cat <<'USAGE'
+usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
+                    [--effort E] [--claude-bin P] [--token-stdin]
+USAGE
+}
+
+# T5 replaces this with the real step functions; setup must pass its exit
+# code through (§5.4). The placeholder keeps that contract honest meanwhile.
+run_gauntlet() { return 0; }
+
+# probe_models <endpoint> <token> — GET /v1/models WITH the auth header over
+# curl stdin config (token never argv, C6); echoes space-joined ids on
+# success, returns non-zero when unreachable.
+probe_models() {
+    _pout=$(curl -s -m 5 --config - <<EOF
+url = "$1/v1/models"
+header = "anthropic-version: 2023-06-01"
+header = "Authorization: Bearer $2"
+write-out = "%{http_code}"
+silent
+EOF
+) || return 1
+    case $_pout in
+        *200)
+            # tolerant of whitespace the server puts around ':'
+            printf '%s\n' "${_pout%200}" | \
+                grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' '
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+cmd_setup() {
+    _y='' _ep=${QLAUDE_ENDPOINT:-} _md=${QLAUDE_MODEL:-} _au=${QLAUDE_AUTH:-}
+    _ct=${QLAUDE_CONTEXT_TOKENS:-} _ef=${QLAUDE_EFFORT:-} _cb=${QLAUDE_CLAUDE_BIN:-}
+    _tok=${QLAUDE_TOKEN:-} _tok_stdin=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -y) _y=1 ;;
+            --endpoint) shift; _ep=${1:-} ;;
+            --model) shift; _md=${1:-} ;;
+            --auth) shift; _au=${1:-} ;;
+            --context) shift; _ct=${1:-} ;;
+            --effort) shift; _ef=${1:-} ;;
+            --claude-bin) shift; _cb=${1:-} ;;
+            --token-stdin) _tok_stdin=1 ;;
+            *)
+                err "unknown option '$1'"
+                usage_setup >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+
+    _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
+    # Re-setup: preview existing values; unflagged answers keep them (§5.4).
+    # The token value is never previewed (A4).
+    if [ -f "$_cf" ]; then
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            case $_line in
+                QLAUDE_ENDPOINT=*)
+                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$_ep"; fi
+                    ;;
+                QLAUDE_MODEL=*)
+                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
+                    ;;
+                QLAUDE_AUTH=*) [ -z "$_au" ] && _au=${_line#*=} ;;
+                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
+                QLAUDE_EFFORT=*) [ -z "$_ef" ] && _ef=${_line#*=} ;;
+                QLAUDE_CLAUDE_BIN=*) [ -z "$_cb" ] && _cb=${_line#*=} ;;
+                QLAUDE_TOKEN=*) [ -z "$_tok" ] && _tok=${_line#*=} ;;
+            esac
+        done <"$_cf"
+    fi
+
+    # claude present? detect-then-offer, never silent, never silent-install.
+    _cb=${_cb:-claude}
+    if ! command -v "$_cb" >/dev/null 2>&1; then
+        err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
+    fi
+
+    # token FIRST (before any probe), never echoed (C9): stdin flag or prompt.
+    if [ -n "$_tok_stdin" ]; then
+        IFS= read -r _tok || _tok=''
+    fi
+    if [ -z "$_tok" ] && [ -t 0 ]; then
+        err "token (input hidden): "
+        # spec §5.4 mandates read -rs (silent); undefined per strict POSIX,
+        # but dash/bash/macOS sh all implement it and this branch is TTY-only.
+        # shellcheck disable=SC3045
+        IFS= read -rs _tok || _tok=''
+    fi
+    if [ -z "$_tok" ]; then
+        err "no token (use --token-stdin or QLAUDE_TOKEN) — setup needs it before the model probe"
+        usage_setup >&2
+        return 1
+    fi
+
+    # endpoint; then the authed model probe (token in hand first, §5.4).
+    if [ -z "$_ep" ]; then
+        if [ ! -t 0 ] || [ -n "$_y" ]; then
+            err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"
+            usage_setup >&2
+            return 1
+        fi
+        err "endpoint URL: "
+        IFS= read -r _ep || _ep=''
+    fi
+    _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
+    if [ -n "$_ids" ]; then
+        err "discovered models from $_ep/v1/models: $_ids"
+    else
+        err "note: model probe unreachable at $_ep/v1/models — supply --model"
+    fi
+    if [ -z "$_md" ]; then
+        if [ ! -t 0 ] || [ -n "$_y" ]; then
+            err "model required (--model or QLAUDE_MODEL)"
+            usage_setup >&2
+            return 1
+        fi
+        err "model: "
+        IFS= read -r _md || _md=''
+    fi
+
+    # auth: bearer only (§5.2 / C7).
+    _au=${_au:-bearer}
+    case $_au in
+        bearer) ;;
+        *)
+            err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
+            return 1
+            ;;
+    esac
+
+    if [ -z "$_ct" ]; then
+        if [ -n "$_y" ]; then
+            err "warning: --context not set — verify it against your server's max-model-len; defaulting to 262144"
+        fi
+        _ct=262144
+    fi
+    _ef=${_ef:-medium}
+
+    # save 0600, atomic (temp + mv, §5.4)
+    if ! mkdir -p "$QLAUDE_CONFDIR_RESOLVED"; then
+        err "cannot create $QLAUDE_CONFDIR_RESOLVED"
+        return "$EXIT_PREREQ"
+    fi
+    _t="$_cf.tmp.$$"
+    : >"$_t" || return "$EXIT_PREREQ"
+    chmod 600 "$_t"
+    if {
+        printf 'QLAUDE_ENDPOINT=%s\n' "$_ep"
+        printf 'QLAUDE_MODEL=%s\n' "$_md"
+        printf 'QLAUDE_AUTH=%s\n' "$_au"
+        printf 'QLAUDE_CONTEXT_TOKENS=%s\n' "$_ct"
+        printf 'QLAUDE_EFFORT=%s\n' "$_ef"
+        printf 'QLAUDE_CLAUDE_BIN=%s\n' "$_cb"
+        printf 'QLAUDE_TOKEN=%s\n' "$_tok"
+    } >"$_t" && mv "$_t" "$_cf"; then
+        err "saved $_cf (token stored, value not printed)"
+    else
+        rm -f "$_t"
+        err "could not write $_cf"
+        return "$EXIT_PREREQ"
+    fi
+
+    # tail: run the gauntlet, pass its exit code through (§5.4)
+    run_gauntlet
+}
 
 # --- launcher (spec §5.3)
 # The export set is the contract (A4): exactly these, no more.
@@ -288,8 +461,16 @@ cmd_config() {
 main() {
     _cmd=${1:-}
     case $_cmd in
-        '' | launch | --) cmd_launch "$@" ;;
-        setup) cmd_setup ;;
+        '') cmd_launch "$@" ;;
+        launch)
+            shift
+            cmd_launch "$@"
+            ;;
+        --) cmd_launch "$@" ;;
+        setup)
+            shift
+            cmd_setup "$@"
+            ;;
         doctor) cmd_doctor ;;
         config) cmd_config ;;
         ensure-path) cmd_ensure_path ;;

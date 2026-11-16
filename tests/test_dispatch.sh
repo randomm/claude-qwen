@@ -78,13 +78,16 @@ err=$(NO_COLOR= TERM=xterm pty_run sh "$tool" frobnicate 2>/dev/null)
 if printf '%s' "$err" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
 t "NO_COLOR present-but-empty: colour suppressed on TTY" 0 $st
 
-# 5. Known verbs are dispatched, not rejected as unknown: setup routes to the
-# dispatch placeholder (which its later task replaces).
+# 5. Known verbs are dispatched, not rejected as unknown: setup routes to
+# the wizard (non-TTY without inputs it refuses with its own usage, C9 —
+# not the launcher's unknown-verb message).
 err=$(sh "$tool" setup </dev/null 2>&1)
-if printf '%s\n' "$err" | grep -qi 'not available in this build'; then
-    t "setup verb is dispatched (placeholder reached)" 0 0
+if printf '%s\n' "$err" | grep -qi 'unknown command'; then
+    t "setup verb is dispatched (reaches the wizard)" 1 1
+elif printf '%s\n' "$err" | grep -qi 'no token'; then
+    t "setup verb is dispatched (reaches the wizard)" 0 0
 else
-    t "setup verb is dispatched (placeholder reached)" 1 1
+    t "setup verb is dispatched (reaches the wizard)" 1 1
 fi
 
 # 4b. Colour branch forced: with colour enabled, err() emits the escape.
