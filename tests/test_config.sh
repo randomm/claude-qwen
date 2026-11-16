@@ -41,16 +41,67 @@ if [ "$QLAUDE_EFFORT" = "medium" ]; then st=0; else st=1; fi
 t "valid: effort defaults to medium" 0 $st
 
 # 2. Corrupted config: fix message pointing at qlaude setup, no crash.
+# The fixture is otherwise FULLY VALID on purpose: with a missing-model
+# line the parse would fail for the wrong reason and the corruption
+# guards could never go red (house rule §8). Assert 'config corrupted'
+# specifically — 'qlaude setup' alone also matches the missing-key
+# message and would confound this with test 3.
+reset_cfg() {
+    QLAUDE_ENDPOINT='' QLAUDE_MODEL='' QLAUDE_AUTH='' QLAUDE_CONTEXT_TOKENS=''
+    QLAUDE_EFFORT='' QLAUDE_CLAUDE_BIN='' QLAUDE_TOKEN=''
+}
 cat >"$tmp/broken" <<'CFG'
 QLAUDE_ENDPOINT=https://models.example.com
+QLAUDE_MODEL=my-model
 this is not a key=value line
 CFG
-QLAUDE_ENDPOINT='' QLAUDE_MODEL=''
+reset_cfg
 out=$(config_parse "$tmp/broken" 2>&1)
 st=$?
 t "corrupt: non-zero exit, no crash" 1 $((st == 0 || st > 128))
+printf '%s\n' "$out" | grep -q 'config corrupted'
+t "corrupt: message names the corruption" 0 $?
 printf '%s\n' "$out" | grep -q 'qlaude setup'
 t "corrupt: message points at qlaude setup" 0 $?
+
+# 2b. Invalid KEY shape (spaces around '=') must be refused as corrupted,
+# not silently ignored: this is the shape that can carry a token line.
+cat >"$tmp/broken2" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com
+QLAUDE_MODEL=my-model
+QLAUDE_TOKEN = sneaky-value
+CFG
+reset_cfg
+out=$(config_parse "$tmp/broken2" 2>&1)
+st=$?
+t "corrupt key shape: non-zero exit" 1 $((st == 0 || st > 128))
+printf '%s\n' "$out" | grep -q 'config corrupted'
+t "corrupt key shape: message names the corruption" 0 $?
+
+# 1b. Every file-loaded key must land in the env, not just endpoint+model:
+# a deleted parse branch has to make the suite go red (house rule §8).
+cat >"$tmp/full" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com
+QLAUDE_MODEL=my-model
+QLAUDE_AUTH=api-key
+QLAUDE_CONTEXT_TOKENS=131072
+QLAUDE_EFFORT=high
+QLAUDE_CLAUDE_BIN=/opt/claude
+QLAUDE_TOKEN=file-token-value
+CFG
+reset_cfg
+config_parse "$tmp/full" >/dev/null 2>&1
+t "full: parse exits 0" 0 $?
+if [ "$QLAUDE_AUTH" = "api-key" ]; then st=0; else st=1; fi
+t "full: QLAUDE_AUTH loaded from file" 0 $st
+if [ "$QLAUDE_CONTEXT_TOKENS" = "131072" ]; then st=0; else st=1; fi
+t "full: QLAUDE_CONTEXT_TOKENS loaded from file" 0 $st
+if [ "$QLAUDE_EFFORT" = "high" ]; then st=0; else st=1; fi
+t "full: QLAUDE_EFFORT loaded from file" 0 $st
+if [ "$QLAUDE_CLAUDE_BIN" = "/opt/claude" ]; then st=0; else st=1; fi
+t "full: QLAUDE_CLAUDE_BIN loaded from file" 0 $st
+if [ "$QLAUDE_TOKEN" = "file-token-value" ]; then st=0; else st=1; fi
+t "full: QLAUDE_TOKEN loaded from file" 0 $st
 
 # 3. Missing required key: fix message, not crash.
 cat >"$tmp/nomod" <<'CFG'

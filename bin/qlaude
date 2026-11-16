@@ -177,7 +177,14 @@ main() {
 }
 
 # Run only as a program; sourcing this file (tests, later commands) exposes
-# functions without executing main.
-if [ "$(basename -- "$0")" = qlaude ]; then
-    main "$@"
-fi
+# functions without executing main. Dispatch when invoked as qlaude, and
+# also when piped (spec C5/C9 `curl ... | sh -s -- --help`): with -s there
+# is no script path in $0 — POSIX leaves $0 unspecified there, and it is
+# empty on dash/bash/sh here and reported as the bare shell name on some
+# others — so the bare-shell names count as program invocation too. A
+# sourcing caller always has its own script path in $0 and is excluded.
+case $0 in
+    '' | */qlaude | qlaude | sh | -sh | dash | -dash | bash | -bash)
+        main "$@"
+        ;;
+esac

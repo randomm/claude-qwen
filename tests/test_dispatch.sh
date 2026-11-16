@@ -30,6 +30,18 @@ t "help: exit 0" 0 $st
 printf '%s\n' "$out" | grep -qi 'usage'
 t "help: usage text on stdout" 0 $?
 
+# 2b. Pipe form (spec C5/C9: curl ... | sh -s -- --help) must dispatch too:
+# with -s there is no $0 path, so an execute guard keyed on basename $0
+# silently no-ops the documented install-pipe invocation.
+out=$(sh -s -- --help <"$tool" 2>/dev/null)
+st=$?
+t "pipe form: --help exit 0" 0 $st
+printf '%s\n' "$out" | grep -qi 'usage'
+t "pipe form: --help prints usage" 0 $?
+sh -s -- frobnicate <"$tool" >/dev/null 2>&1
+st=$?
+t "pipe form: unknown verb exits 1" 1 $((st != 1))
+
 # 3. Unknown subcommand: usage on stderr, exit 1 (non-TTY: never a prompt).
 err=$(sh "$tool" frobnicate 2>&1 >/dev/null)
 st=$?
