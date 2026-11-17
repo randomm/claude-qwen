@@ -58,10 +58,10 @@ config_parse() {
         err "no config at $_file — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
-    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0
-    # corrupted lines may carry the token (G4): print line NUMBER only.
+    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0  # corrupted lines: line NUMBER only (G4)
     while IFS= read -r _line || [ -n "$_line" ]; do
         _n=$((_n + 1))
+        _line=${_line%"$(printf '\r')"}  # a15: tolerate one trailing CR (CRLF files); $'…' banned by C1
         case $_line in
             '' | '#'*) continue ;;
         esac
@@ -88,7 +88,7 @@ config_parse() {
             QLAUDE_EFFORT) _ef=$_val ;;
             QLAUDE_CLAUDE_BIN) _cb=$_val ;;
             QLAUDE_TOKEN) _tk=$_val ;;
-            *) : ;; # unknown but well-formed keys are forward-compatible
+            *) : ;; # well-formed unknown keys are forward-compatible
         esac
     done <"$_file"
     # an already-set (non-empty) QLAUDE_* env beats the file
