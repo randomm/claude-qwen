@@ -103,6 +103,24 @@ env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
 grep -q '^ANTHROPIC_MODEL=my-model$' "$tmp/env" && ! grep -q '^ANTHROPIC_MODEL=inherited-model$' "$tmp/env"
 t "launch: inherited ANTHROPIC_MODEL overridden (qlaude-wins)" 0 $?
 
+# 4b. audit 2026-11-18: a hand-edited QLAUDE_EFFORT=high must be MAPPED at the
+# launcher choke-point — README itself lists 'high' as a Claude Code name,
+# servers reject it, and the failure-mode remedy (set CLAUDE_CODE_EFFORT_LEVEL)
+# is unreachable under the launcher's unconditional export.
+mkdir -p "$tmp/hiconf"
+printf 'QLAUDE_ENDPOINT=https://models.example.com\nQLAUDE_MODEL=my-model\nQLAUDE_TOKEN=launch-token-9f2e\nQLAUDE_EFFORT=high\n' >"$tmp/hiconf/config.env"
+chmod 600 "$tmp/hiconf/config.env"
+printf 'appended prompt body\n' >"$tmp/hiconf/SYSTEM-PROMPT.md"
+out=$(env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
+    QLAUDE_CONFIG_DIR="$tmp/hiconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+    SHIM_ARGV="$tmp/hi.argv" SHIM_ENV="$tmp/hi.env" \
+    sh "$tool" 2>&1)
+if grep -qxF 'CLAUDE_CODE_EFFORT_LEVEL=xhigh' "$tmp/hi.env" \
+    && ! grep -qxF 'CLAUDE_CODE_EFFORT_LEVEL=high' "$tmp/hi.env"; then st=0; else st=1; fi
+t "launch: hand-edited 'high' maps to xhigh at the choke-point" 0 $st
+if printf '%s\n' "$out" | grep -qi 'using xhigh for this launch'; then st=0; else st=1; fi
+t "  the mapping is announced with the config fix pointer" 0 $st
+
 # 5. Missing token: doctor-style fix message, exit 1, claude never exec'd.
 printf 'QLAUDE_ENDPOINT=https://models.example.com\nQLAUDE_MODEL=my-model\n' \
     >"$tmp/notoken.conf"
