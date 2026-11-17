@@ -401,6 +401,7 @@ cmd_setup() {
     [ -n "$_echo_off" ] && { stty echo 2>/dev/null; trap - EXIT INT TERM; _echo_off=''; }
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
+    _has_bad_char "$_ep" && { err "endpoint must not contain quote or line break (config corruption?) — re-enter the URL"; return 1; }
     _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
     if [ -n "$_ids" ]; then
         err "discovered models from $_epd/v1/models: $_ids"
