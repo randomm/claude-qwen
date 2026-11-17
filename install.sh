@@ -6,6 +6,18 @@
 # authentication of raw.githubusercontent.com. Documented honestly.
 set -u
 
+# audit a9: never write through a planted link — a symlink/hardlink at a
+# destination gave any local actor arbitrary-file overwrite + arbitrary chmod
+# as the installer's uid (root under sudo); checksums cannot catch that — the
+# payload is honest, the DESTINATION was redirected. Refuse non-regular, unlink first.
+install_file() { # $1=src $2=dest $3=mode
+    if [ -L "$2" ] || { [ -e "$2" ] && [ ! -f "$2" ]; }; then
+        err "refusing: $2 exists and is not a regular file"; exit "$EXIT_TOOL"
+    fi
+    rm -f "$2" 2>/dev/null || { err "cannot replace $2"; exit "$EXIT_PREREQ"; }
+    cp "$1" "$2" || { err "cannot write $2"; exit "$EXIT_PREREQ"; }
+    chmod "$3" "$2"
+}
 say() { printf 'qlaude install: %s\n' "$*"; }
 err() { printf 'qlaude install: %s\n' "$*" >&2; }
 
@@ -133,16 +145,8 @@ if ! mkdir -p "$CONFDIR"; then
     err "cannot create $CONFDIR"
     exit "$EXIT_PREREQ"
 fi
-if ! cp "$work/qlaude" "$INSTALLDIR/qlaude"; then
-    err "cannot write $INSTALLDIR/qlaude"
-    exit "$EXIT_PREREQ"
-fi
-chmod 755 "$INSTALLDIR/qlaude"
-if ! cp "$work/SYSTEM-PROMPT.md" "$CONFDIR/SYSTEM-PROMPT.md"; then
-    err "cannot write $CONFDIR/SYSTEM-PROMPT.md"
-    exit "$EXIT_PREREQ"
-fi
-chmod 600 "$CONFDIR/SYSTEM-PROMPT.md"
+install_file "$work/qlaude" "$INSTALLDIR/qlaude" 755
+install_file "$work/SYSTEM-PROMPT.md" "$CONFDIR/SYSTEM-PROMPT.md" 600
 say "installed $INSTALLDIR/qlaude"
 
 # --- PATH guidance only; rc files are never touched (C4). ensure-path is
