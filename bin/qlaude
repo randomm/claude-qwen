@@ -183,6 +183,9 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
+# audit a3 (§5.8): probes adhere to the configured auth style — api-key profiles
+# (hand-edited config.env; setup stays bearer per C7) failed doctor on hardcoded Bearer.
+_auth_hdr_line() { case ${QLAUDE_AUTH:-bearer} in api-key) printf 'header = "x-api-key: %s"\n' "$1" ;; *) printf 'header = "Authorization: Bearer %s"\n' "$1" ;; esac; }
 # step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows
 # the one printed 404 auto-fix.
 step1_messages() {
@@ -194,7 +197,7 @@ step1_messages() {
 url = "$QLAUDE_ENDPOINT/v1/messages"
 header = "content-type: application/json"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $_G_TOK"
+$(_auth_hdr_line "$_G_TOK")
 data-raw = "{\\"model\\": \\"$QLAUDE_MODEL\\", \\"max_tokens\\": 8, \\"messages\\": [{\\"role\\": \\"user\\", \\"content\\": \\"say OK\\"}]}"
 write-out = "%{http_code}"
 silent
@@ -309,12 +312,12 @@ run_gauntlet() {
     step4_info
 }
 cmd_doctor() { run_gauntlet; }
-# probe_models <endpoint> <token> — GET /v1/models WITH auth (stdin config,
+# probe_models <endpoint> <token> — GET /v1/models WITH auth per style (G4: stdin config, never argv).
 probe_models() {
     _pout=$(curl -s -m 5 --config - <<EOF
 url = "$1/v1/models"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $2"
+$(_auth_hdr_line "$2")
 write-out = "%{http_code}"
 silent
 EOF
@@ -383,9 +386,7 @@ cmd_setup() {
         prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
         IFS= read -r _ep || _ep=''
     fi
-    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
-    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
-    # newline-less final line (vault/pipeline idiom — EOF is not discard).
+    # token before probe, never echoed (C9). tty+stdin-flag hides; plain read keeps newline-less final line.
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
         prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
@@ -430,8 +431,7 @@ cmd_setup() {
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
     fi
-    # C6 §5.4: on macOS the token goes to the Keychain, piped on STDIN (never
-    # argv — G4); a locked/odd keychain notes + degrades to the 0600 file.
+    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file.
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
@@ -509,6 +509,7 @@ cmd_launch() {
         err "no token configured — run: qlaude setup"
         return 1
     }
+    [ "$QLAUDE_AUTH" = api-key ] && err "warning: QLAUDE_AUTH=api-key sends x-api-key (hand-edited config — some servers treat it as account login; README auth row). bearer is the supported style (C7)."
     # qlaude-always-wins: unconditional exports (README manual block = bypass).
     export ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT"
     case $QLAUDE_AUTH in
@@ -531,8 +532,7 @@ cmd_launch() {
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: this list is the assertion target; values come from the shell's
-        # own params — a printenv child would inherit the exported token.
+        # A4: assertion target; values from own params (a printenv child would inherit the token).
         case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
         err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
         err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
