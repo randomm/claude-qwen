@@ -136,7 +136,8 @@ setup was broken, so old errors keep appearing.
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | Claude Code routes some traffic (background tasks like session titles, plus `/model` picks) to roles named after Anthropic's model family — Opus, Sonnet and Haiku are Anthropic model names. Pin all three to your model, or those calls ask for a `claude-haiku-*` model your server does not have | background calls fail |
 | `CLAUDE_CODE_EFFORT_LEVEL` | Reasoning effort. Claude Code's own levels are `low/medium/high/xhigh`, but vLLM validates the field against its own list — `low`, `medium`, `xhigh` — so `high` is rejected: a name mismatch between the two products, not a typo on your side | a rejected value fails the request with HTTP 400 listing vLLM's accepted values |
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Declares the real context window for model ids Claude Code does not recognize | compaction triggers at the assumed 1M; requests fail with HTTP 400 past the server's real limit. Never set it above `--max-model-len` |
-| `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model on your endpoint, falls back, and shows the auto-mode eligibility notice once per day. See [Auto mode](#auto-mode-and-the-safety-classifier) |
+| `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model name on your endpoint and falls back; your server may not have it. See [Auto mode](#auto-mode-and-the-safety-classifier) |
+| `QLAUDE_AUTO_MODE_SERVER` (config.env / env) | `on` keeps Anthropic's server-side auto-mode checks switched on. The qlaude launcher otherwise exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`: an OpenAI-compatible server can never return `safeguard_results`, so asking for server checks only produces the billing notice | leave unset on self-hosted servers; set `on` only behind a gateway implementing the [pass-through contract](https://code.claude.com/docs/en/auto-mode-classifier-billing) |
 
 ### Installer coordinates (optional)
 
@@ -204,37 +205,63 @@ curly quotes from chat-pasting, hidden characters, or a mangled token.
 | Long sessions die with "context length exceeded" | Claude Code assumed a 1M window; the server's is smaller | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (≤ `--max-model-len`) |
 | `Unexpected reasoning effort ... Supported types are ...` | effort value the server does not accept | `CLAUDE_CODE_EFFORT_LEVEL` to one of the values the error lists |
 | Model "writes" files but nothing changes | server has no tool-call parser, so tool calls arrived as text | `--tool-call-parser` at vLLM start |
-| "this session isn't eligible … not compatible with this update" | Anthropic's server-side auto-mode classifier can't reach a custom endpoint; this is a billing disclosure, not an error | press Enter once, or pin the classifier model (see [Auto mode](#auto-mode-and-the-safety-classifier)) |
+| "this session isn't eligible … not compatible with this update" | server-side auto-mode checks were requested but the endpoint can't answer them — a billing disclosure, not an error; the qlaude launcher normally prevents it entirely | launch through `qlaude` (it exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`), or unset `QLAUDE_AUTO_MODE_SERVER=on` if your gateway cannot do the pass-through (see [Auto mode](#auto-mode-and-the-safety-classifier)) |
 | ECONNREFUSED through a corporate or container proxy | Claude Code is a Node.js app: it ignores `*_proxy` variables unless `NODE_USE_ENV_PROXY=1`, and proxies can break its streaming responses | if the server is directly reachable, run `claude` with proxy variables unset; if you must traverse a proxy, set `NODE_USE_ENV_PROXY=1` plus `HTTPS_PROXY`, then test streaming with `claude -p` before trusting it |
 
 ## Auto mode and the safety classifier
 
 Auto mode runs a safety classifier over actions (shell commands, network
-calls) before they execute. Anthropic's new no-charge *server-side* checks
-are a first-party service and never reach a session behind your own endpoint,
-so Claude Code shows a notice naming your server as "not compatible with this
-update". It is a billing disclosure, not an error: press Enter and the
-classifier runs as Claude Code's own model calls through your base URL —
-**your server makes the decisions**, billed as ordinary tokens on your box —
-and the notice stays dismissed.
+calls) before they execute. Anthropic can also run those checks server-side
+at no charge — but only where the checks can actually reach the session.
+Per
+[the official billing doc](https://code.claude.com/docs/en/auto-mode-classifier-billing),
+a gateway keeps them alive by forwarding the `anthropic-beta` header and the
+`safeguards` request-body field **unchanged, as a pair** (on the Bedrock
+InvokeModel format, the `anthropic_beta` body field instead), and by
+returning responses and streaming events without dropping fields, rewriting
+tool-use ids, or omitting `safeguard_results`.
 
-The two classifier exports are already in the [Setup](#setup) block; they
-name the decision-maker explicitly and skip the notice:
+An OpenAI-compatible server cannot answer `safeguard_results` at all, so
+server-side checks are structurally unreachable for qlaude setups. The
+documented remedy for exactly that case is to stop asking for them — and the
+qlaude launcher does it for you:
+
+```bash
+# exported by qlaude launch — you do not set this yourself
+export CLAUDE_CODE_AUTO_MODE_SERVER=0
+```
+
+With it the "this session isn't eligible" notice never appears, and the
+classifier runs as Claude Code's own model calls through your base URL —
+**your server makes the decisions**, billed as ordinary tokens on your box.
+That is why the two classifier pins matter (both are already in the
+[Setup](#setup) block):
 
 ```bash
 export CLAUDE_CODE_AUTO_MODE_MODEL="<your-model-name>"      # auto-mode decisions
 export CLAUDE_CODE_BG_CLASSIFIER_MODEL="<your-model-name>"  # background tasks
 ```
 
-Verified November 2026: with these set (and `CLAUDE_CODE_AUTO_MODE_SERVER`
-unset), auto mode enabled and actions auto-approved, classifier served by the
-custom model. Internally, the classifier model resolves through the same
-model config as the main loop and falls back gracefully when the endpoint
-can't serve Anthropic's default classifier model.
+Verified November 2026: with these set, auto mode enabled and actions
+auto-approved, the classifier is served by your custom model; it resolves
+through the same model config as the main loop.
 
-**Do not** set `CLAUDE_CODE_AUTO_MODE_SERVER=0` to silence the notice: it
-turns off the server checks and this build has no local fallback left, so
-auto mode quietly degrades to asking approval for every checked action.
+Behind a gateway that does implement the pass-through contract above, opt
+back in so the free server-side checks can reach your session:
+
+```bash
+export QLAUDE_AUTO_MODE_SERVER=on    # env or config.env; anything else = off (default)
+```
+
+Manual-env users (bypassing the launcher): set
+`CLAUDE_CODE_AUTO_MODE_SERVER=0` yourself.
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` also turns the server checks off
+while `CLAUDE_CODE_AUTO_MODE_SERVER` is unset, but it disables other beta
+features too — prefer the explicit `0`.
+
+Where the notice cannot wait for an answer (`claude -p` prints it to stderr;
+stream-json emits a system warning), with qlaude's default it does not
+appear at all.
 
 Two caveats:
 
