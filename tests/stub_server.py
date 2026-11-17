@@ -24,15 +24,20 @@ class Stub(BaseHTTPRequestHandler):
         return self.headers.get("Authorization") == "Bearer " + TOKEN
 
     def _send(self, code, payload):
-        body = json.dumps(payload).encode()
+        body = json.dumps(payload, separators=(",", ":")).encode()
         self.send_response(code)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
+        # claude's SDK classifies a reply without request-id as "server
+        # other" (T7 live-CLI ground truth).
+        self.send_header("request-id", "stub_req_1")
         self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != "/v1/messages":
+        # claude 2.x requests /v1/messages?beta=true — route on the path,
+        # query string stripped (T7 live-CLI ground truth).
+        if self.path.split("?", 1)[0] != "/v1/messages":
             self._send(404, {"error": {"type": "not_found_error"}})
             return
         if not self._authorized():
@@ -52,13 +57,20 @@ class Stub(BaseHTTPRequestHandler):
                 text = c if isinstance(c, str) else str(c)
                 break
         self._send(200, {
+            "id": "stub-msg-1",
+            "type": "message",
+            "role": "assistant",
             "content": [{"type": "text", "text": text}],
             "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 2,
+                      "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 0},
             "model": model,
         })
 
     def do_GET(self):
-        if self.path != "/v1/models":
+        if self.path.split("?", 1)[0] != "/v1/models":
             self._send(404, {"error": {"type": "not_found_error"}})
             return
         if not self._authorized():

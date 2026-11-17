@@ -156,8 +156,12 @@ else
 fi
 
 # 8. CONFDIR/INSTALLDIR resolve exactly per spec §0.
+# SC2031: earlier suites set HOME only inside $( ) subshells; the $HOME
+# referenced here is the harness value, unchanged at top level.
+# shellcheck disable=SC2031
 if [ "${QLAUDE_CONFDIR_RESOLVED:-}" = "${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}" ]; then st=0; else st=1; fi
 t "paths: CONFDIR matches spec §0" 0 $st
+# shellcheck disable=SC2031
 if [ "${QLAUDE_INSTALLDIR_RESOLVED:-}" = "${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}" ]; then st=0; else st=1; fi
 t "paths: INSTALLDIR matches spec §0" 0 $st
 

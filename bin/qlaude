@@ -1,20 +1,14 @@
 #!/bin/sh
 # qlaude — Claude Code against your own endpoint, no env-var literacy.
-# Strict POSIX sh (spec C1): shellcheck -s sh clean, dash -n clean.
-# Never eval config contents (spec §6); no set -x anywhere (spec §6).
+# shellcheck disable=SC2030,SC2031  # probe-subshell isolation is intentional
+# Strict POSIX sh (C1); never eval config, no set -x anywhere (§6).
 set -u
-
 QLAUDE_VERSION=0.0.1
-
-# --- paths: canonical definitions per spec §0 — every use means exactly this
-# shellcheck disable=SC2034  # read by the test suites; constants are the API
+# --- paths (spec §0): constants are API; tests read them directly.
+# shellcheck disable=SC2034
 QLAUDE_INSTALLDIR_RESOLVED=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
-# shellcheck disable=SC2034  # read by the test suites; constants are the API
+# shellcheck disable=SC2034
 QLAUDE_CONFDIR_RESOLVED=${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}
-
-# --- exit codes: centralized per the spec §5.5 gauntlet table. All are part
-# of the contract used by doctor/setup paths (T4-T6), not dead today.
-# shellcheck disable=SC2034  # used by later tasks per spec §5.5 exit map
 EXIT_USAGE=1
 EXIT_PREREQ=2
 # shellcheck disable=SC2034  # spec §5.5 step-1 exit (auth failures)
@@ -23,30 +17,25 @@ EXIT_AUTH=3
 EXIT_CLI=4
 # shellcheck disable=SC2034  # spec §5.5 step-3 exit (tool-probe failures)
 EXIT_TOOL=5
-
-# --- output discipline (spec C9): diagnostics on stderr only, plain when
-# NO_COLOR / TERM=dumb / non-TTY. NO_COLOR is honoured on PRESENCE, not
-# value (no-color.org, the baseline C9 cites): NO_COLOR= must also silence.
-if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then
-    C_ERR=''
-else
-    C_ERR=$(printf '\033[31m')
-fi
+# --- output discipline (C9): stderr only; NO_COLOR honoured on PRESENCE
+if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_ERR=''; else C_ERR=$(printf '\033[31m'); fi
 C_RESET=''
-if [ -z "$C_ERR" ]; then
-    :
-else
-    C_RESET=$(printf '\033[0m')
-fi
-
-err() {
-    printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2
+[ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
+err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
+# prompt — interactive question, cursor stays on the prompt line (unlike err).
+prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
+_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
+# it ("Illegal option -s" — ubuntu-latest CI, /bin/sh IS dash); probe exits 1
+# (EOF, not "illegal"=2) to accept the flag, else stty -echo + signal trap.
+    # shellcheck disable=SC3045
+    if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
+    else
+        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' INT TERM; IFS= read -r "$1"; _hr_st=$?; trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
+    fi
 }
-
 usage() {
     cat <<'USAGE'
 usage: qlaude [command] [args...]
-
 Commands:
   (none)         launch Claude Code against the configured endpoint
   setup          guided configuration (interview + self-test)
@@ -57,11 +46,7 @@ Commands:
   --help         this text
 USAGE
 }
-
-# config_parse <file> — config is data, never code: KEY=value lines read with
-# read/case (spec §5.2, never eval'd; spec §6). Populates QLAUDE_* honoring
-# precedence flags > QLAUDE_* env > file > default. Corrupted config gets a
-# fix message pointing at qlaude setup, never a crash.
+# config_parse: config is data, never code (§5.2/§6). flags>env>file>default.
 config_parse() {
     if [ "$#" -ne 1 ]; then
         err "internal: config_parse needs one file argument"
@@ -72,10 +57,8 @@ config_parse() {
         err "no config at $_file — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
-
     _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0
-    # Never echo the offending line: a corrupted line may itself carry the
-    # token (spec §6, G4) — report the line number only.
+    # corrupted lines may carry the token (G4): print line NUMBER only.
     while IFS= read -r _line || [ -n "$_line" ]; do
         _n=$((_n + 1))
         case $_line in
@@ -107,8 +90,7 @@ config_parse() {
             *) : ;; # unknown but well-formed keys are forward-compatible
         esac
     done <"$_file"
-
-    # precedence: an already-set (non-empty) QLAUDE_* env beats the file
+    # an already-set (non-empty) QLAUDE_* env beats the file
     if [ -z "${QLAUDE_ENDPOINT:-}" ]; then QLAUDE_ENDPOINT=$_ep; fi
     if [ -z "${QLAUDE_MODEL:-}" ]; then QLAUDE_MODEL=$_md; fi
     if [ -z "${QLAUDE_AUTH:-}" ]; then QLAUDE_AUTH=$_au; fi
@@ -116,18 +98,13 @@ config_parse() {
     if [ -z "${QLAUDE_EFFORT:-}" ]; then QLAUDE_EFFORT=$_ef; fi
     if [ -z "${QLAUDE_CLAUDE_BIN:-}" ]; then QLAUDE_CLAUDE_BIN=$_cb; fi
     if [ -z "${QLAUDE_TOKEN:-}" ]; then QLAUDE_TOKEN=$_tk; fi
-
     case $QLAUDE_AUTH in
         '' | bearer | api-key) ;;
-        *)
-            err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"
-            return "$EXIT_USAGE"
-            ;;
+        *) err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"; return "$EXIT_USAGE" ;;
     esac
     QLAUDE_AUTH=${QLAUDE_AUTH:-bearer}
     QLAUDE_CONTEXT_TOKENS=${QLAUDE_CONTEXT_TOKENS:-262144}
     QLAUDE_EFFORT=${QLAUDE_EFFORT:-medium}
-
     if [ -z "$QLAUDE_ENDPOINT" ]; then
         err "QLAUDE_ENDPOINT missing — run: qlaude setup"
         return "$EXIT_USAGE"
@@ -144,75 +121,379 @@ config_parse() {
     fi
     return 0
 }
-
-# Command bodies not yet built are dispatch placeholders (T4 wizard,
-# T5 gauntlet, T6 ensure-path + full config).
-not_implemented() {
-    err "'$1' is not available in this build yet — see the qlaude issue tracker for its task"
-    return "$EXIT_PREREQ"
+# ensure-path (§5.7): one marker-delimited block in the user's rc file,
+# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else Darwin →
+# ~/.zprofile, Linux → ~/.profile. Append-only; foreign marker block = refuse.
+cmd_ensure_path() {
+    _dry=''
+    case ${1:-} in
+        '') ;;
+        --dry-run) _dry=1 ;;
+        *) err "usage: qlaude ensure-path [--dry-run]"; return "$EXIT_USAGE" ;;
+    esac
+    if [ "$(basename "${SHELL:-sh}")" = zsh ] || [ "$(uname)" = Darwin ]; then
+        _f="$HOME/.zprofile"
+    else
+        _f="$HOME/.profile"
+    fi
+    _exp="export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
+    if [ -f "$_f" ] && grep -q '^# qlaude PATH$' "$_f"; then
+        if grep -qxF "$_exp" "$_f"; then
+            err "ensure-path: already configured in $_f"
+            return 0
+        fi
+        err "refusing: the '# qlaude PATH' block in $_f was not written by qlaude — edit it yourself"
+        return 1
+    fi
+    if [ -n "$_dry" ]; then
+        printf 'would append to %s:\n%s\n%s\n%s\n' "$_f" '# qlaude PATH' "$_exp" '# end qlaude PATH' >&2
+        return 0
+    fi
+    # no set -e: the redirect failure must be checked, never reported as success
+    if ! printf '\n%s\n%s\n%s\n' '# qlaude PATH' "$_exp" '# end qlaude PATH' >>"$_f" 2>/dev/null; then
+        err "could not write $_f — check its permissions"
+        return "$EXIT_PREREQ"
+    fi
+    err "PATH updated in $_f — open a new terminal to pick it up"
 }
-
-cmd_setup() { not_implemented setup; }
-cmd_doctor() { not_implemented doctor; }
-cmd_ensure_path() { not_implemented ensure-path; }
-
-# --- launcher (spec §5.3)
-# The export set is the contract (A4): exactly these, no more.
-# shellcheck disable=SC2034  # the set is the spec §5.3 contract, read below
-QLAUDE_EXPORTS='ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS'
-
-# abs_exec <path-or-name> — echo an absolute executable path. A value with
-# a slash is resolved against the CWD and absolutized (a CWD-relative exec
-# string would let whoever controls the directory hijack the launch).
-abs_exec() {
-    _c=$1
+usage_setup() { # wizard usage (§5.4)
+    cat <<'USAGE'
+usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
+                    [--effort E] [--claude-bin P] [--token-stdin]
+USAGE
+}
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
+# stderr; exit per table; NO set -e here (rule).
+gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
+step0_prereq() {
+    case $(uname) in
+        Linux | Darwin) ;;
+        *) gline FAIL 0 prereqs "OS unsupported → run on Linux or macOS"
+            return "$EXIT_PREREQ" ;;
+    esac
+    command -v curl >/dev/null 2>&1 || {
+        gline FAIL 0 prereqs "curl missing → install curl"; return "$EXIT_PREREQ"; }
+    _G_BIN=$(abs_exec "${QLAUDE_CLAUDE_BIN:-claude}") || _G_BIN=''
+    if [ -z "$_G_BIN" ] || ! "$_G_BIN" --version >/dev/null 2>&1; then
+        gline FAIL 0 prereqs "claude not found → install via official channel: npm install -g @anthropic-ai/claude-code (never auto-installed)"
+        return "$EXIT_PREREQ"
+    fi
+    [ -s "$QLAUDE_CONFDIR_RESOLVED/SYSTEM-PROMPT.md" ] || {
+        gline FAIL 0 prereqs "SYSTEM-PROMPT.md missing/empty → run: qlaude setup, or re-run the installer"
+        return "$EXIT_PREREQ"; }
+    gline PASS 0 prereqs "all found"; return 0
+}
+# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows
+# the one printed 404 auto-fix.
+step1_messages() {
+    if [ -z "${_G_TOK:-}" ]; then
+        gline FAIL 1 messages "no token configured → run: qlaude setup"
+        return "$EXIT_AUTH"
+    fi
+    _s=$(curl -s -m 15 --config - <<EOF 2>/dev/null
+url = "$QLAUDE_ENDPOINT/v1/messages"
+header = "content-type: application/json"
+header = "anthropic-version: 2023-06-01"
+header = "Authorization: Bearer $_G_TOK"
+data-raw = "{\\"model\\": \\"$QLAUDE_MODEL\\", \\"max_tokens\\": 8, \\"messages\\": [{\\"role\\": \\"user\\", \\"content\\": \\"say OK\\"}]}"
+write-out = "%{http_code}"
+silent
+EOF
+) || { gline FAIL 1 messages "request failed → check endpoint and network"; return "$EXIT_AUTH"; }
+    _c=$(printf '%s' "$_s" | tail -c 3)
     case $_c in
-        */*)
-            if [ ! -x "$_c" ]; then
-                return 1
+        200)
+            if printf '%s' "${_s%???}" | grep -q '"text"'; then
+                gline PASS 1 messages "200 with content text"; return 0
             fi
-            case $_c in
-                /*) printf '%s\n' "$_c" ;;
-                *)
-                    _d=$(cd "${_c%/*}" 2>/dev/null && pwd) || return 1
-                    printf '%s/%s\n' "$_d" "${_c##*/}"
-                    ;;
+            gline FAIL 1 messages "200 but no content[0].text → server is not speaking the Messages shape (README verify-curl row)"
+            return "$EXIT_AUTH" ;;
+        404)
+            if [ "${1:-}" = 1 ]; then
+                gline FAIL 1 messages "404 at $QLAUDE_ENDPOINT/v1/messages → likely a /v1 path issue (README Setup)"
+                return "$EXIT_AUTH"
+            fi
+            case $QLAUDE_ENDPOINT in
+                */v1) _fx=${QLAUDE_ENDPOINT%/v1} ;;
+                *) _fx="$QLAUDE_ENDPOINT/v1" ;;
             esac
-            ;;
-        *) command -v "$_c" ;;
+            err "note: 404 — retrying once with a corrected /v1 path: $_fx (printed auto-fix, spec §5.5)"
+            QLAUDE_ENDPOINT=$_fx step1_messages 1
+            return $? ;;
+        401 | 403)
+            gline FAIL 1 messages "auth rejected ($_c) → wrong token or auth style: re-run qlaude setup (bearer only); an x-api-key server needs the README manual env block"
+            return "$EXIT_AUTH" ;;
+        *)
+            gline FAIL 1 messages "unexpected HTTP '$_c' → check the endpoint (README verify-curl row)"
+            return "$EXIT_AUTH" ;;
     esac
 }
-
-# token_resolve — C6 ladder per spec §5.3 step 2: on macOS the KEYCHAIN
-# comes first (security -w prints to stdout: the token is never in argv,
-# only the service name); the QLAUDE_TOKEN file/env value is the fallback
-# everywhere and the only source off-Darwin. Echoes the token.
+# step2/step3: isolated HOME per spawn (C7): user ~/.claude.json excluded.
+step2_claude() {
+    # §5.5: on failure the probe's own text is surfaced VERBATIM (auth/login/
+    # env diagnosis is doctor's job, not the user's rerun chore).
+    _o=$(_probe_claude "Reply with exactly: OK" 1)
+    if printf '%s\n' "$_o" | grep -q OK; then
+        gline PASS 2 claude "echoed OK"; return 0
+    fi
+    gline FAIL 2 claude "claude -p did not echo OK — its verbatim output follows"
+    # verbatim but sanitized: keep lines/tabs, strip ESC + other control bytes
+    printf '%s\n' "$_o" | LC_ALL=C tr -cd '\040-\176\n\t' >&2
+    return "$EXIT_CLI"
+}
+step3_tools() {
+    # a tool probe can't honestly pass against the stub: SKIP, not faked PASS
+    if [ -n "${QLAUDE_STUB:-}" ]; then
+        gline SKIP 3 tools "stub-backed run — tool probe skipped by design"; return 0
+    fi
+    if _probe_claude "Use the Bash tool to run: echo QLAUDE_TOOL_OK" 5 \
+        'Bash(echo QLAUDE_TOOL_OK)' | grep -q QLAUDE_TOOL_OK; then
+        gline PASS 3 tools "tool call round-tripped"; return 0
+    fi
+    gline FAIL 3 tools "no QLAUDE_TOOL_OK marker → set the server's --tool-call-parser (README tool-call-parser row)"
+    return "$EXIT_TOOL"
+}
+# step4_info — informational only, never fails (spec §5.5).
+step4_info() {
+    _w=''
+    if [ -n "${HTTPS_PROXY:-}" ] && [ -z "${NODE_USE_ENV_PROXY:-}" ]; then
+        gline WARN 4 proxy "HTTPS_PROXY set without NODE_USE_ENV_PROXY → Node may ignore it (README proxy row)"
+        _w=1
+    fi
+    if [ "${CLAUDE_CODE_AUTO_MODE_SERVER:-}" = 0 ]; then
+        gline WARN 4 auto-mode "stale CLAUDE_CODE_AUTO_MODE_SERVER=0 → unset it (README auto-mode row)"
+        _w=1
+    fi
+    [ -n "${CLAUDE_CODE_BG_CLASSIFIER_MODEL:-}" ] || {
+        gline WARN 4 classifier "classifier model unset — the launcher exports it; only manual-env users can hit this"
+        _w=1; }
+    [ -n "$_w" ] || gline PASS 4 info "no informational issues"
+    return 0
+}
+# _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5
+# C7): fresh HOME+CWD, ANTHROPIC_*/CLAUDE_CODE_* scrubbed, token into only
+# this child (C6's exception), abs bin. It runs as this user — not a sandbox.
+_probe_claude() {
+    _d=$(mktemp -d) || return 1
+    (
+        cd "$_d" || exit 1
+        unset CLAUDE_CODE_AUTO_MODE_SERVER
+        case $QLAUDE_AUTH in
+            api-key)
+                unset ANTHROPIC_AUTH_TOKEN
+                export ANTHROPIC_API_KEY="$_G_TOK" ;;
+            *)
+                unset ANTHROPIC_API_KEY
+                export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
+        esac
+        export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
+            ANTHROPIC_MODEL="$QLAUDE_MODEL"
+        if [ -n "${3:-}" ]; then
+            exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" \
+                --max-turns "$2" --allowedTools "$3"
+        fi
+        exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" --max-turns "$2"
+    ) 2>&1
+}
+run_gauntlet() {
+    if [ ! -f "$QLAUDE_CONFDIR_RESOLVED/config.env" ]; then
+        err "no config at $QLAUDE_CONFDIR_RESOLVED/config.env — run: qlaude setup"
+        return "$EXIT_USAGE"
+    fi
+    config_parse "$QLAUDE_CONFDIR_RESOLVED/config.env" || return "$EXIT_USAGE"
+    _G_TOK=$(token_resolve) || _G_TOK=''
+    step0_prereq || return $?
+    step1_messages || return $?
+    step2_claude || return $?
+    step3_tools || return $?
+    step4_info
+}
+cmd_doctor() { run_gauntlet; }
+# probe_models <endpoint> <token> — GET /v1/models WITH auth (stdin config,
+probe_models() {
+    _pout=$(curl -s -m 5 --config - <<EOF
+url = "$1/v1/models"
+header = "anthropic-version: 2023-06-01"
+header = "Authorization: Bearer $2"
+write-out = "%{http_code}"
+silent
+EOF
+) || return 1
+    case $_pout in
+        *200)
+            # tolerant of whitespace around ':'; ids are SERVER-CONTROLLED —
+            # filtered to printable ASCII before display (no escape injection).
+            printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
+            ;;
+        *) return 1 ;;
+    esac
+}
+cmd_setup() {
+    _y='' _ep=${QLAUDE_ENDPOINT:-} _md=${QLAUDE_MODEL:-} _au=${QLAUDE_AUTH:-}
+    _ct=${QLAUDE_CONTEXT_TOKENS:-} _ef=${QLAUDE_EFFORT:-} _cb=${QLAUDE_CLAUDE_BIN:-}
+    _tok=${QLAUDE_TOKEN:-} _tok_stdin=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -y) _y=1 ;;
+            --endpoint) shift; _ep=${1:-} ;;
+            --model) shift; _md=${1:-} ;;
+            --auth) shift; _au=${1:-} ;;
+            --context) shift; _ct=${1:-} ;;
+            --effort) shift; _ef=${1:-} ;;
+            --claude-bin) shift; _cb=${1:-} ;;
+            --token-stdin) _tok_stdin=1 ;;
+            *)
+                err "unknown option '$1'"
+                usage_setup >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+    _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
+    err "qlaude setup: configures endpoint/model/token into $_cf (mode 0600, token never printed)"
+    # Re-setup: preview existing values (token value never previewed, A4).
+    if [ -f "$_cf" ]; then
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            case $_line in
+                QLAUDE_ENDPOINT=*)
+                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$_ep"; fi
+                    ;;
+                QLAUDE_MODEL=*)
+                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
+                    ;;
+                QLAUDE_AUTH=*) [ -z "$_au" ] && _au=${_line#*=} ;;
+                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
+                QLAUDE_EFFORT=*) [ -z "$_ef" ] && _ef=${_line#*=} ;;
+                QLAUDE_CLAUDE_BIN=*) [ -z "$_cb" ] && _cb=${_line#*=} ;;
+                QLAUDE_TOKEN=*) [ -z "$_tok" ] && _tok=${_line#*=} ;;
+            esac
+        done <"$_cf"
+    fi
+    # claude present? detect-then-offer, never silent, never silent-install.
+    _cb=${_cb:-claude}
+    if ! command -v "$_cb" >/dev/null 2>&1; then
+        err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
+    fi
+    # endpoint first, so the token prompt can name what the token is FOR
+    # (owner UX feedback); token still precedes the probe, per §5.4.
+    if [ -z "$_ep" ]; then
+        if [ ! -t 0 ] || [ -n "$_y" ]; then err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"; usage_setup >&2; return 1; fi
+        prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
+        IFS= read -r _ep || _ep=''
+    fi
+    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
+    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
+    # newline-less final line (vault/pipeline idiom — EOF is not discard).
+    if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
+    if [ -z "$_tok" ] && [ -t 0 ]; then
+        prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
+        _hidden_read _tok || _tok=''
+        printf '\n' >&2
+    fi
+    if [ -z "$_tok" ]; then
+        err "no token (use --token-stdin or QLAUDE_TOKEN) — setup needs it before the model probe"
+        usage_setup >&2
+        return 1
+    fi
+    # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
+    _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
+    _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
+    if [ -n "$_ids" ]; then
+        err "discovered models from $_epd/v1/models: $_ids"
+    else
+        err "note: model probe unreachable at $_epd/v1/models — supply --model"
+    fi
+    if [ -z "$_md" ]; then
+        if [ ! -t 0 ] || [ -n "$_y" ]; then err "model required (--model or QLAUDE_MODEL)"; usage_setup >&2; return 1; fi
+        prompt "model (id as the server knows it, e.g. from the discovered list): "
+        IFS= read -r _md || _md=''
+        if [ -z "$_md" ]; then err "model required (--model or QLAUDE_MODEL) — empty model would break every launch"; usage_setup >&2; return 1; fi
+    fi
+    # auth: bearer only (§5.2 / C7).
+    _au=${_au:-bearer}
+    if [ "$_au" != bearer ]; then
+        err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
+        return 1
+    fi
+    # §5.4 questions — only when still unset and interactive; -y keeps flags.
+    if [ -z "$_ct" ] && [ -z "$_y" ] && [ -t 0 ]; then prompt "context window tokens (= your server's --max-model-len; Enter = 262144): "; IFS= read -r _ctv || _ctv=''; [ -n "$_ctv" ] && _ct="$_ctv"; fi
+    if [ -z "$_ct" ]; then
+        [ -n "$_y" ] && err "warning: --context not set — verify it against your server's max-model-len; defaulting to 262144"
+        _ct=262144
+    fi
+    if [ -z "$_ef" ] && [ -z "$_y" ] && [ -t 0 ]; then prompt "reasoning effort low/medium/high/xhigh (Enter = medium): "; IFS= read -r _efv || _efv=''; [ -n "$_efv" ] && _ef="$_efv"; fi
+    _ef=${_ef:-medium}
+    # save 0600, atomic (temp + mv, §5.4)
+    if ! mkdir -p "$QLAUDE_CONFDIR_RESOLVED"; then
+        err "cannot create $QLAUDE_CONFDIR_RESOLVED"
+        return "$EXIT_PREREQ"
+    fi
+    # C6 §5.4: on macOS the token goes to the Keychain, piped on STDIN (never
+    # argv — G4); a locked/odd keychain notes + degrades to the 0600 file.
+    _kc=0
+    if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
+        _u=${USER:-$(id -un 2>/dev/null)}
+        if printf '%s' "$_tok" | security add-generic-password -U -a "${_u:-qlaude}" -s qlaude -w 2>/dev/null \
+            && [ "$(security find-generic-password -s qlaude -w 2>/dev/null)" = "$_tok" ]; then
+            _kc=1; err "token stored in the macOS Keychain (service qlaude)"
+        else
+            err "keychain unavailable (write/read-back failed?) — falling back to the 0600 file"
+        fi
+    fi
+    _t="$_cf.tmp.$$"
+    : >"$_t" || return "$EXIT_PREREQ"
+    chmod 600 "$_t"
+    if {
+        printf 'QLAUDE_ENDPOINT=%s\n' "$_ep"
+        printf 'QLAUDE_MODEL=%s\n' "$_md"
+        printf 'QLAUDE_AUTH=%s\n' "$_au"
+        printf 'QLAUDE_CONTEXT_TOKENS=%s\n' "$_ct"
+        printf 'QLAUDE_EFFORT=%s\n' "$_ef"
+        printf 'QLAUDE_CLAUDE_BIN=%s\n' "$_cb"
+        [ "$_kc" = 1 ] || printf 'QLAUDE_TOKEN=%s\n' "$_tok"
+    } >"$_t" && mv "$_t" "$_cf"; then
+        err "saved $_cf (token stored, value not printed)"
+    else
+        rm -f "$_t"
+        err "could not write $_cf"
+        return "$EXIT_PREREQ"
+    fi
+    # tail: run the gauntlet, pass its exit code through (§5.4)
+    run_gauntlet
+}
+# --- launcher (§5.3); the export set is the contract (A4): exactly these.
+QLAUDE_EXPORTS='ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS'
+# abs_exec — absolute executable path; CWD-relative slash values absolutized.
+abs_exec() {
+    case $1 in
+        */*) ;;
+        *) command -v "$1"; return ;;
+    esac
+    [ -x "$1" ] || return 1
+    case $1 in
+        /*) printf '%s\n' "$1" ;;
+        *) _d=$(cd "${1%/*}" 2>/dev/null && pwd) || return 1; printf '%s/%s\n' "$_d" "${1##*/}" ;;
+    esac
+}
+# token_resolve — C6 ladder (§5.3 step 2): macOS keychain FIRST (stdout read,
 token_resolve() {
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _t=$(security find-generic-password -s qlaude -w 2>/dev/null) || _t=''
-        if [ -n "$_t" ]; then
-            printf '%s' "$_t"
-            return 0
-        fi
+        if [ -n "$_t" ]; then printf '%s' "$_t"; return 0; fi
     fi
-    if [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf '%s' "$QLAUDE_TOKEN"
-        return 0
-    fi
+    if [ -n "${QLAUDE_TOKEN:-}" ]; then printf '%s' "$QLAUDE_TOKEN"; return 0; fi
     return 1
 }
-
 token_source() { # label only — never the value (A4)
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1 && \
         security find-generic-password -s qlaude -w >/dev/null 2>&1; then
         printf 'keychain'
-    elif [ -n "${QLAUDE_TOKEN:-}" ]; then
-        printf 'file-or-env'
-    else
-        printf 'unset'
+    elif [ -n "${QLAUDE_TOKEN:-}" ]; then printf 'file-or-env'
+    else printf 'unset'
     fi
 }
-
 cmd_launch() {
     _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
     if [ ! -f "$_cf" ]; then
@@ -228,9 +509,7 @@ cmd_launch() {
         err "no token configured — run: qlaude setup"
         return 1
     }
-
-    # qlaude-always-wins: unconditional exports, predictability over
-    # inheritance (the README's manual block stays the bypass).
+    # qlaude-always-wins: unconditional exports (README manual block = bypass).
     export ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT"
     case $QLAUDE_AUTH in
         bearer)
@@ -242,41 +521,23 @@ cmd_launch() {
             unset ANTHROPIC_AUTH_TOKEN
             ;;
     esac
-    export ANTHROPIC_MODEL="$QLAUDE_MODEL"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="$QLAUDE_MODEL"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="$QLAUDE_MODEL"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$QLAUDE_MODEL"
-    export CLAUDE_CODE_AUTO_MODE_MODEL="$QLAUDE_MODEL"
-    export CLAUDE_CODE_BG_CLASSIFIER_MODEL="$QLAUDE_MODEL"
-    export CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$QLAUDE_CONTEXT_TOKENS"
-
-    # A stale server-check kill switch must not silently defeat the pins
-    # (README: this build has no local fallback).
+    export ANTHROPIC_MODEL="$QLAUDE_MODEL" ANTHROPIC_DEFAULT_OPUS_MODEL="$QLAUDE_MODEL" \
+        ANTHROPIC_DEFAULT_SONNET_MODEL="$QLAUDE_MODEL" ANTHROPIC_DEFAULT_HAIKU_MODEL="$QLAUDE_MODEL"
+    export CLAUDE_CODE_AUTO_MODE_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_BG_CLASSIFIER_MODEL="$QLAUDE_MODEL" \
+        CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT" CLAUDE_CODE_MAX_CONTEXT_TOKENS="$QLAUDE_CONTEXT_TOKENS"
+    # stale kill switch must not silently defeat the pins (README).
     if [ "${CLAUDE_CODE_AUTO_MODE_SERVER:-}" = 0 ]; then
         err "warning: CLAUDE_CODE_AUTO_MODE_SERVER=0 disables server checks and this build has no local fallback — auto mode would degrade to asking approval for every checked action; unsetting it for the child (see README auto-mode section)"
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
-
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: the list itself is the assertion target; token value redacted.
-        # Values come from the shell's own parameters — never an external
-        # printenv, whose child would inherit the exported token (§5.3/A4).
-        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
-        case $QLAUDE_AUTH in
-            bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;;
-            api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;;
-        esac
-        err "export ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
-        err "export ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
-        err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL"
-        err "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
-        err "export CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
-        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL"
-        err "export CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL"
-        err "export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+        # A4: this list is the assertion target; values come from the shell's
+        # own params — a printenv child would inherit the exported token.
+        case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
+        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
+        err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
+        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
     fi
-
     _bin=${QLAUDE_CLAUDE_BIN:-claude}
     _abs=$(abs_exec "$_bin") || {
         err "claude bin not found ('$_bin') — install Claude Code, or set QLAUDE_CLAUDE_BIN"
@@ -289,9 +550,7 @@ cmd_launch() {
     err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (run: qlaude setup)"
     exec "$_abs" "$@"
 }
-
-# qlaude config — resolved state; full form lands with T6, the shadowed
-# report (spec §5.3) is contract here. Never the token value (A4).
+# qlaude config — resolved state + shadowed report (§5.3); never the token (A4).
 cmd_config() {
     _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
     if [ ! -f "$_cf" ]; then
@@ -301,31 +560,29 @@ cmd_config() {
     if ! config_parse "$_cf"; then
         return 1
     fi
-    printf 'CONFDIR=%s\nINSTALLDIR=%s\nendpoint=%s\nmodel=%s\nauth=%s\ncontext=%s\neffort=%s\nclaude_bin=%s\ntoken=%s\n' \
+    _cb_res=${QLAUDE_CLAUDE_BIN:-claude}
+    _cv=$("$_cb_res" --version 2>/dev/null | head -1)
+    printf 'CONFDIR=%s\nINSTALLDIR=%s\nendpoint=%s\nmodel=%s\nauth=%s\ncontext=%s\neffort=%s\nclaude_bin=%s\nclaude_version=%s\ntoken=%s\n' \
         "$QLAUDE_CONFDIR_RESOLVED" "$QLAUDE_INSTALLDIR_RESOLVED" \
         "$QLAUDE_ENDPOINT" "$QLAUDE_MODEL" "$QLAUDE_AUTH" \
         "$QLAUDE_CONTEXT_TOKENS" "$QLAUDE_EFFORT" \
-        "${QLAUDE_CLAUDE_BIN:-claude}" "$(token_source)"
+        "$_cb_res" "$_cv" "$(token_source)"
     for _n in $QLAUDE_EXPORTS; do
         if [ -n "$(printenv "$_n")" ]; then
             printf 'shadowed-inherited=%s\n' "$_n"
         fi
     done
 }
-
 main() {
     _cmd=${1:-}
     case $_cmd in
         '') cmd_launch "$@" ;;
-        launch)
-            shift
-            cmd_launch "$@"
-            ;;
+        launch) shift; cmd_launch "$@" ;;
         --) cmd_launch "$@" ;;
-        setup) cmd_setup ;;
+        setup) shift; cmd_setup "$@" ;;
         doctor) cmd_doctor ;;
         config) cmd_config ;;
-        ensure-path) cmd_ensure_path ;;
+        ensure-path) shift; cmd_ensure_path "$@" ;;
         --version | -V) printf 'qlaude %s\n' "$QLAUDE_VERSION" ;;
         --help | -h | help) usage ;;
         *)
@@ -335,14 +592,8 @@ main() {
             ;;
     esac
 }
-
-# Run only as a program; sourcing this file (tests, later commands) exposes
-# functions without executing main. Dispatch when invoked as qlaude, and
-# also when piped (spec C5/C9 `curl ... | sh -s -- --help`): with -s there
-# is no script path in $0 — POSIX leaves $0 unspecified there, and it is
-# empty on dash/bash/sh here and reported as the bare shell name on some
-# others — so the bare-shell names count as program invocation too. A
-# sourcing caller always has its own script path in $0 and is excluded.
+# Run only as a program; sourcing (tests) exposes functions without main.
+# Piped `sh -s` gives an empty/bare-shell $0 — those count as invocation.
 case $0 in
     '' | */qlaude | qlaude | sh | -sh | dash | -dash | bash | -bash)
         main "$@"

@@ -78,13 +78,37 @@ err=$(NO_COLOR= TERM=xterm pty_run sh "$tool" frobnicate 2>/dev/null)
 if printf '%s' "$err" | grep -q "$(printf '\033')"; then st=1; else st=0; fi
 t "NO_COLOR present-but-empty: colour suppressed on TTY" 0 $st
 
-# 5. Known verbs are dispatched, not rejected as unknown: setup routes to the
-# dispatch placeholder (which its later task replaces).
-err=$(sh "$tool" setup </dev/null 2>&1)
-if printf '%s\n' "$err" | grep -qi 'not available in this build'; then
-    t "setup verb is dispatched (placeholder reached)" 0 0
+# 5. Known verbs are dispatched, not rejected as unknown: setup routes to
+# the wizard (non-TTY without inputs it refuses with its own usage, C9).
+# Review finding: 'no token' is NOT wizard-specific — the launcher's
+# missing-token error says the same thing, so misrouting setup to
+# cmd_launch kept the old assertion green. Pin a string only the wizard
+# prints ('usage: qlaude setup') plus its refusal exit code.
+# Isolated HOME/CONFDIR: the wizard's refusal must not depend on whether
+# the machine running the suite happens to have a qlaude config.
+err=$(env -i PATH=/usr/bin:/bin HOME=/nonexistent-qlaude-test \
+    sh "$tool" setup </dev/null 2>&1)
+st=$?
+if [ "$st" -eq 1 ] && printf '%s\n' "$err" | grep -qi 'usage: qlaude setup'; then
+    t "setup verb is dispatched (reaches the wizard)" 0 0
 else
-    t "setup verb is dispatched (placeholder reached)" 1 1
+    t "setup verb is dispatched (reaches the wizard)" 1 1
+fi
+# 5b. Config-present companion: with a full config on disk, cmd_launch
+# would NOT fall through to the wizard — so the wizard's own refusal of a
+# bogus flag (usage + exit 1) is a routing signal misrouting cannot fake.
+_home5b=$(mktemp -d)
+mkdir -p "$_home5b/.config/qlaude"
+printf 'QLAUDE_ENDPOINT=https://models.example.com\nQLAUDE_MODEL=m\nQLAUDE_TOKEN=t\n' \
+    >"$_home5b/.config/qlaude/config.env"
+err5b=$(env -i PATH=/usr/bin:/bin HOME="$_home5b" \
+    sh "$tool" setup --definitely-not-a-flag </dev/null 2>&1)
+st5b=$?
+rm -rf "$_home5b"
+if [ "$st5b" -eq 1 ] && printf '%s\n' "$err5b" | grep -qi 'usage: qlaude setup'; then
+    t "setup verb is dispatched even with config present" 0 0
+else
+    t "setup verb is dispatched even with config present" 1 1
 fi
 
 # 4b. Colour branch forced: with colour enabled, err() emits the escape.
