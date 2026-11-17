@@ -36,7 +36,7 @@ mkdir -p "$conf" "$tmp/bin"
 printf '#!/bin/sh\ncase "$*" in\n -p\ *) env >> "$PROBE_DUMP"\nesac\ncase "$*" in\n *QLAUDE_TOOL_OK*) echo QLADE_TOOL_OK ;;\n *) echo OK\nesac\n' >"$tmp/bin/claude"
 chmod +x "$tmp/bin/claude"
 
-printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\nQLAUDE_TOKEN=%s\n' "$base" "$QLAUDE_CI_TOKEN" >"$conf/config.env"
+printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\nQLAUDE_TOKEN=%s\nQLAUDE_EFFORT=xhigh\n' "$base" "$QLAUDE_CI_TOKEN" >"$conf/config.env"
 chmod 600 "$conf/config.env"
 printf 'appended prompt body\n' >"$conf/SYSTEM-PROMPT.md"
 
@@ -64,5 +64,14 @@ if grep -q "ANTHROPIC_AUTH_TOKEN=$QLAUDE_CI_TOKEN" "$tmp/dump"; then st=0; else 
 t "  anti-vacuous: curated token IS exported to the probe child" 0 $st
 if grep -q "ANTHROPIC_BASE_URL=$base" "$tmp/dump"; then st=0; else st=1; fi
 t "  anti-vacuous: probe child env dump captured (shim ran)" 0 $st
+# Dogfood regression (2026-11-17, real gateway): the probe unset EFFORT and never
+# re-exported it — Claude Code's own default effort 'high' then reached servers whose
+# enum is low|medium|xhigh → "FAIL 2" on a correctly configured server, though
+# qlaude launch worked (it exports the validated effort). The probe must mirror
+# the launch-path effort contract.
+if grep -q '^CLAUDE_CODE_EFFORT_LEVEL=xhigh$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe child carries the config effort (mirrors the launch contract)" 0 $st
+if grep -q '^CLAUDE_CODE_EFFORT_LEVEL=high$' "$tmp/dump"; then st=1; else st=0; fi
+t "probe child never gets the rejected 'high' (server enum)" 0 $st
 
 exit "$fail"
