@@ -22,10 +22,12 @@ if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_E
 C_RESET=''
 [ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
+# audit a1: endpoint/model feed curl --config heredocs — a quote/line break smuggles a second url= line (token leak; repro in issue).
+_has_bad_char() { [ "$(printf '%s' "$1" | tr -cd '\n\r"' | wc -c)" -ne 0 ]; }
 # prompt — interactive question, cursor stays on the prompt line (unlike err).
 prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
-_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
-# it ("Illegal option -s" — CI /bin/sh IS dash); probe exits 1 (EOF not illegal=2), else stty -echo + traps.
+_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX (dash: "Illegal option -s"; CI sh is
+# dash): accept only probe exit 1 (EOF, not 2=illegal-option); fallback uses stty -echo + INT/TERM trap.
     # shellcheck disable=SC3045
     if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
     else
@@ -118,10 +120,10 @@ config_parse() {
         err "QLAUDE_MODEL missing — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
+    _has_bad_char "$QLAUDE_ENDPOINT$QLAUDE_MODEL" && { err "config corrupted (quote or line break in QLAUDE_ENDPOINT/QLAUDE_MODEL) — run: qlaude setup"; return "$EXIT_USAGE"; }
     return 0
 }
-# ensure-path (§5.7): one marker block in the rc file chosen by shell/OS (zsh→zprofile
-# both OSes; else Darwin→zprofile, Linux→profile). Append-only; foreign block = refuse.
+# ensure-path (§5.7): one marker block in the rc file; shell picks it — zsh → .zprofile both OSes, Darwin → .zprofile, Linux → .profile.
 cmd_ensure_path() {
     _dry=''
     case ${1:-} in
@@ -134,15 +136,10 @@ cmd_ensure_path() {
     else
         _f="$HOME/.profile"
     fi
-    # audit a10: relative PATH entry = each future cwd (attacker dir + cd + login = exec) — absolute only.
-    case $QLAUDE_INSTALLDIR_RESOLVED in
-        /*) ;;
-        *) err "ensure-path: QLAUDE_INSTALL_DIR must be an absolute path"; return "$EXIT_USAGE" ;;
-    esac
-    # audit a7: value lands double-quoted in a login-sourced rc — escape \ " $ ` so `"; cmd; #` stays inert.
-    # shellcheck disable=SC2016  # $ and ` quoted on purpose — sed must see them literally
-    _esc=$(printf '%s' "$QLAUDE_INSTALLDIR_RESOLVED" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g')
-    _exp="export PATH=\"$_esc:\$PATH\""
+    case $QLAUDE_INSTALLDIR_RESOLVED in /*) ;; *) err "ensure-path: QLAUDE_INSTALL_DIR must be an absolute path"; return "$EXIT_USAGE" ;; esac  # a10: a relative entry = every future cwd
+    # a7: rc value lands double-quoted in a login-sourced rc; sed escapes it literally:
+    # shellcheck disable=SC2016
+    _exp="export PATH=\"$(printf '%s' "$QLAUDE_INSTALLDIR_RESOLVED" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g'):\$PATH\""
     if [ -f "$_f" ] && grep -q '^# qlaude PATH$' "$_f"; then
         if grep -qxF "$_exp" "$_f"; then
             err "ensure-path: already configured in $_f"
@@ -188,6 +185,8 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
+# audit a3 (§5.8): probes follow QLAUDE_AUTH (api-key profiles are hand-edited; setup stays bearer, C7).
+_auth_hdr_line() { case ${QLAUDE_AUTH:-bearer} in api-key) printf 'header = "x-api-key: %s"\n' "$1" ;; *) printf 'header = "Authorization: Bearer %s"\n' "$1" ;; esac; }
 # step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows the one 404 auto-fix.
 step1_messages() {
     if [ -z "${_G_TOK:-}" ]; then
@@ -198,7 +197,7 @@ step1_messages() {
 url = "$QLAUDE_ENDPOINT/v1/messages"
 header = "content-type: application/json"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $_G_TOK"
+$(_auth_hdr_line "$_G_TOK")
 data-raw = "{\\"model\\": \\"$QLAUDE_MODEL\\", \\"max_tokens\\": 8, \\"messages\\": [{\\"role\\": \\"user\\", \\"content\\": \\"say OK\\"}]}"
 write-out = "%{http_code}"
 silent
@@ -234,7 +233,7 @@ EOF
 }
 # step2/step3: isolated HOME per spawn (C7): user ~/.claude.json excluded.
 step2_claude() {
-    # §5.5: on failure the probe's text surfaces VERBATIM (diagnosis is doctor's job, not a rerun chore).
+    # §5.5: on failure the probe's own text is surfaced VERBATIM (auth/env diagnosis is doctor's job).
     _o=$(_probe_claude "Reply with exactly: OK" 1)
     if printf '%s\n' "$_o" | grep -q OK; then
         gline PASS 2 claude "echoed OK"; return 0
@@ -273,21 +272,16 @@ step4_info() {
     [ -n "$_w" ] || gline PASS 4 info "no informational issues"
     return 0
 }
-# _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5
-# C7): fresh HOME+CWD, ANTHROPIC_*/CLAUDE_CODE_* scrubbed, token into only
-# this child (C6's exception), abs bin. It runs as this user — not a sandbox.
+# _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5 C7): fresh HOME+CWD, scrubbed env, token only this child, abs bin.
 _probe_claude() {
     _d=$(mktemp -d) || return 1
     (
         cd "$_d" || exit 1
-        unset CLAUDE_CODE_AUTO_MODE_SERVER
+        # audit a2: scrub the FULL credential-shaped namespace — OAUTH_TOKEN/CUSTOM_HEADERS/stale pins included.
+        for _scrub in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_MODEL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_AUTO_MODE_SERVER CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS; do unset "$_scrub"; done
         case $QLAUDE_AUTH in
-            api-key)
-                unset ANTHROPIC_AUTH_TOKEN
-                export ANTHROPIC_API_KEY="$_G_TOK" ;;
-            *)
-                unset ANTHROPIC_API_KEY
-                export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
+            api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
+            *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
         export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
             ANTHROPIC_MODEL="$QLAUDE_MODEL"
@@ -312,19 +306,19 @@ run_gauntlet() {
     step4_info
 }
 cmd_doctor() { run_gauntlet; }
-# probe_models <endpoint> <token> — GET /v1/models WITH auth (stdin config,
+# probe_models <endpoint> <token> — GET /v1/models WITH auth per style (G4: stdin config, never argv).
 probe_models() {
     _pout=$(curl -s -m 5 --config - <<EOF
 url = "$1/v1/models"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $2"
+$(_auth_hdr_line "$2")
 write-out = "%{http_code}"
 silent
 EOF
 ) || return 1
     case $_pout in
         *200)
-            # whitespace-tolerant; ids are SERVER-CONTROLLED — printable-ASCII filter before display (no escape injection).
+            # ids are SERVER-CONTROLLED: printable-ASCII-filtered before display (no escape injection).
             printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
                 sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
@@ -353,6 +347,11 @@ cmd_setup() {
         esac
         shift
     done
+    # audit a14: bytes typed at an EARLIER prompt echo the token — kill echo NOW, pre-first-byte.
+    _echo_off=''
+    if [ -t 0 ] && { [ -n "$_tok_stdin" ] || [ -z "$_tok" ]; }; then
+        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' EXIT INT TERM; _echo_off=1
+    fi
     _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
     err "qlaude setup: configures endpoint/model/token into $_cf (mode 0600, token never printed)"
     # Re-setup: preview existing values (token value never previewed, A4).
@@ -378,16 +377,14 @@ cmd_setup() {
     if ! command -v "$_cb" >/dev/null 2>&1; then
         err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
-    # endpoint first, so the token prompt can name what the token is FOR
-    # (owner UX feedback); token still precedes the probe, per §5.4.
+    # endpoint first so the token prompt names its target (owner UX); token still precedes probe (§5.4).
     if [ -z "$_ep" ]; then
         if [ ! -t 0 ] || [ -n "$_y" ]; then err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"; usage_setup >&2; return 1; fi
         prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
         IFS= read -r _ep || _ep=''
+        [ -n "$_echo_off" ] && [ -n "$_ep" ] && err "endpoint (read back): $(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')"
     fi
-    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
-    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
-    # newline-less final line (vault/pipeline idiom — EOF is not discard).
+    # token before probe, never echoed (C9). tty+stdin-flag still hides; plain read keeps newline-less final line.
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
         prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
@@ -399,6 +396,7 @@ cmd_setup() {
         usage_setup >&2
         return 1
     fi
+    [ -n "$_echo_off" ] && { stty echo 2>/dev/null; trap - EXIT INT TERM; _echo_off=''; }
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
     _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
@@ -413,7 +411,8 @@ cmd_setup() {
         IFS= read -r _md || _md=''
         if [ -z "$_md" ]; then err "model required (--model or QLAUDE_MODEL) — empty model would break every launch"; usage_setup >&2; return 1; fi
     fi
-    # auth: bearer only (§5.2 / C7).
+    # auth: bearer only (§5.2 / C7). audit a1: reject sink-poisoning bytes early.
+    _has_bad_char "$_ep$_md" && { err "endpoint/model must not contain quote or line break"; return 1; }
     _au=${_au:-bearer}
     if [ "$_au" != bearer ]; then
         err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
@@ -432,7 +431,7 @@ cmd_setup() {
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
     fi
-    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file.
+    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file with a note.
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
@@ -518,6 +517,7 @@ cmd_launch() {
             unset ANTHROPIC_API_KEY
             ;;
         api-key)
+            err "warning: QLAUDE_AUTH=api-key sends x-api-key (hand-edited config; README auth row). bearer is the supported style (C7)."
             export ANTHROPIC_API_KEY="$_tok"
             unset ANTHROPIC_AUTH_TOKEN
             ;;
