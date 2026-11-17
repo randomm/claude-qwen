@@ -183,6 +183,8 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
+# audit a3 (§5.8): probes follow QLAUDE_AUTH (api-key profiles are hand-edited; setup stays bearer, C7).
+_auth_hdr_line() { case ${QLAUDE_AUTH:-bearer} in api-key) printf 'header = "x-api-key: %s"\n' "$1" ;; *) printf 'header = "Authorization: Bearer %s"\n' "$1" ;; esac; }
 # step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows the one 404 auto-fix.
 step1_messages() {
     if [ -z "${_G_TOK:-}" ]; then
@@ -193,7 +195,7 @@ step1_messages() {
 url = "$QLAUDE_ENDPOINT/v1/messages"
 header = "content-type: application/json"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $_G_TOK"
+$(_auth_hdr_line "$_G_TOK")
 data-raw = "{\\"model\\": \\"$QLAUDE_MODEL\\", \\"max_tokens\\": 8, \\"messages\\": [{\\"role\\": \\"user\\", \\"content\\": \\"say OK\\"}]}"
 write-out = "%{http_code}"
 silent
@@ -303,12 +305,12 @@ run_gauntlet() {
     step4_info
 }
 cmd_doctor() { run_gauntlet; }
-# probe_models <endpoint> <token> — GET /v1/models WITH auth (stdin config,
+# probe_models <endpoint> <token> — GET /v1/models WITH auth per style (G4: stdin config, never argv).
 probe_models() {
     _pout=$(curl -s -m 5 --config - <<EOF
 url = "$1/v1/models"
 header = "anthropic-version: 2023-06-01"
-header = "Authorization: Bearer $2"
+$(_auth_hdr_line "$2")
 write-out = "%{http_code}"
 silent
 EOF
@@ -515,6 +517,7 @@ cmd_launch() {
             unset ANTHROPIC_API_KEY
             ;;
         api-key)
+            err "warning: QLAUDE_AUTH=api-key sends x-api-key (hand-edited config; README auth row). bearer is the supported style (C7)."
             export ANTHROPIC_API_KEY="$_tok"
             unset ANTHROPIC_AUTH_TOKEN
             ;;
@@ -529,8 +532,7 @@ cmd_launch() {
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: this list is the assertion target; values come from the shell's
-        # own params — a printenv child would inherit the exported token.
+        # A4: assertion target; values from own params (a printenv child would inherit the token).
         case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
         err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
         err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
