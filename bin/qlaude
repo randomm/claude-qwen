@@ -288,7 +288,7 @@ _probe_claude() {
                 --max-turns "$2" --allowedTools "$3"
         fi
         exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" --max-turns "$2"
-    ) 2>&1
+    ) 2>&1; _rc=$?; rm -rf "$_d" 2>/dev/null; return "$_rc"  # a6: probe HOME/CWD must not litter after any spawn
 }
 run_gauntlet() {
     if [ ! -f "$QLAUDE_CONFDIR_RESOLVED/config.env" ]; then
