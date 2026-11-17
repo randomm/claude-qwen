@@ -22,11 +22,14 @@ if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_E
 C_RESET=''
 [ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
+# audit a1: endpoint/model feed curl --config heredocs — a quote or line break
+# smuggles a second url= line and leaks the Bearer token (audit issue has repro).
+_has_bad_char() { [ "$(printf '%s' "$1" | tr -cd '\n\r"' | wc -c)" -ne 0 ]; }
 # prompt — interactive question, cursor stays on the prompt line (unlike err).
 prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
-_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
-# it ("Illegal option -s" — ubuntu-latest CI, /bin/sh IS dash); probe exits 1
-# (EOF, not "illegal"=2) to accept the flag, else stty -echo + signal trap.
+_hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX (dash: "Illegal
+# option -s"; ubuntu-latest /bin/sh IS dash): accept only on probe exit 1 (EOF,
+# not 2=illegal-option); fallback path uses stty -echo + INT/TERM trap.
     # shellcheck disable=SC3045
     if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
     else
@@ -119,11 +122,11 @@ config_parse() {
         err "QLAUDE_MODEL missing — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
+    _has_bad_char "$QLAUDE_ENDPOINT$QLAUDE_MODEL" && { err "config corrupted (quote or line break in QLAUDE_ENDPOINT/QLAUDE_MODEL) — run: qlaude setup"; return "$EXIT_USAGE"; }
     return 0
 }
-# ensure-path (§5.7): one marker-delimited block in the user's rc file,
-# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else Darwin →
-# ~/.zprofile, Linux → ~/.profile. Append-only; foreign marker block = refuse.
+# ensure-path (§5.7): one marker-delimited block in the user's rc file; shell picks
+# it — zsh → ~/.zprofile on BOTH OSes, else Darwin → .zprofile, Linux → .profile.
 cmd_ensure_path() {
     _dry=''
     case ${1:-} in
@@ -162,8 +165,7 @@ usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
                     [--effort E] [--claude-bin P] [--token-stdin]
 USAGE
 }
-# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
-# stderr; exit per table; NO set -e here (rule).
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status on stderr; exit per table; NO set -e.
 gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
 step0_prereq() {
     case $(uname) in
@@ -183,8 +185,7 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
-# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows
-# the one printed 404 auto-fix.
+# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows the one 404 auto-fix.
 step1_messages() {
     if [ -z "${_G_TOK:-}" ]; then
         gline FAIL 1 messages "no token configured → run: qlaude setup"
@@ -270,9 +271,8 @@ step4_info() {
     [ -n "$_w" ] || gline PASS 4 info "no informational issues"
     return 0
 }
-# _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5
-# C7): fresh HOME+CWD, ANTHROPIC_*/CLAUDE_CODE_* scrubbed, token into only
-# this child (C6's exception), abs bin. It runs as this user — not a sandbox.
+# _probe_claude <prompt> <max-turns> [allowedTools] — hardened spawn (§5.5 C7): fresh
+# HOME+CWD, ANTHROPIC_*/CLAUDE_CODE_* scrubbed, token into only this child (C6 exception), abs bin.
 _probe_claude() {
     _d=$(mktemp -d) || return 1
     (
@@ -383,9 +383,8 @@ cmd_setup() {
         prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
         IFS= read -r _ep || _ep=''
     fi
-    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
-    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
-    # newline-less final line (vault/pipeline idiom — EOF is not discard).
+    # token before any probe, never echoed (C9). stdin flag on a TTY still hides
+    # (typed bytes echo); plain read keeps a newline-less final line (EOF≠discard).
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
         prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
@@ -411,7 +410,8 @@ cmd_setup() {
         IFS= read -r _md || _md=''
         if [ -z "$_md" ]; then err "model required (--model or QLAUDE_MODEL) — empty model would break every launch"; usage_setup >&2; return 1; fi
     fi
-    # auth: bearer only (§5.2 / C7).
+    # auth: bearer only (§5.2 / C7). audit a1: reject sink-poisoning bytes early.
+    _has_bad_char "$_ep$_md" && { err "endpoint/model must not contain quote or line break"; return 1; }
     _au=${_au:-bearer}
     if [ "$_au" != bearer ]; then
         err "auth style must be bearer (C7: api-key headers fail vLLM account checks)"
