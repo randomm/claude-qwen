@@ -234,6 +234,9 @@ export CLAUDE_CODE_AUTO_MODE_SERVER=0
 With it the "this session isn't eligible" notice never appears, and the
 classifier runs as Claude Code's own model calls through your base URL —
 **your server makes the decisions**, billed as ordinary tokens on your box.
+Verified November 2026 against the CI-pinned CLI: with server checks switched
+on the notice *does* appear on `-p` stderr even against a local stub, and the
+qlaude default export suppresses it (CI-enforced differential).
 That is why the two classifier pins matter (both are already in the
 [Setup](#setup) block):
 
