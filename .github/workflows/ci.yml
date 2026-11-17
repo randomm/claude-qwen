@@ -143,11 +143,11 @@ jobs:
         # prints the ineligibility notice to stderr under -p; qlaude's default
         # export (CLAUDE_CODE_AUTO_MODE_SERVER=0) must suppress it entirely.
         run: |
-          "$RUNNER_TEMP/bin/qlaude" -p 'say OK' >/dev/null 2>"$RUNNER_TEMP/am.off.err" || true
+          "$RUNNER_TEMP/bin/qlaude" launch -p 'say OK' >/dev/null 2>"$RUNNER_TEMP/am.off.err" || true
           if grep -qi "isn't eligible" "$RUNNER_TEMP/am.off.err"; then
             echo 'FAIL: notice appeared although the launcher exports =0' >&2
             cat "$RUNNER_TEMP/am.off.err" >&2; exit 1; fi
-          QLAUDE_AUTO_MODE_SERVER=on "$RUNNER_TEMP/bin/qlaude" -p 'say OK' >/dev/null 2>"$RUNNER_TEMP/am.on.err" || true
+          QLAUDE_AUTO_MODE_SERVER=on "$RUNNER_TEMP/bin/qlaude" launch -p 'say OK' >/dev/null 2>"$RUNNER_TEMP/am.on.err" || true
           if ! grep -qi "isn't eligible" "$RUNNER_TEMP/am.on.err"; then
             echo 'FAIL: opt-in did not surface the docs-noticed stderr text (pinned CLI drift?)' >&2
             cat "$RUNNER_TEMP/am.on.err" >&2; exit 1; fi
