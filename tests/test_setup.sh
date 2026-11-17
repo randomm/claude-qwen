@@ -183,7 +183,7 @@ if command -v python3 >/dev/null 2>&1; then
     # on the SAME line (no newline emitted after a prompt). Colour is
     # shell-dependent under a pty (dash emits ANSI even with TERM unset),
     # so strip escape sequences before matching, on every host.
-    if _strip_pty "$tmp/pty.out" | grep -q 'route to): qlaude: token'; then
+    if _strip_pty "$tmp/pty.out" | grep -q 'route to): qlaude: endpoint (read back)'; then
         st=0
     else
         st=1
@@ -221,7 +221,7 @@ if command -v python3 >/dev/null 2>&1 && command -v dash >/dev/null 2>&1; then
     # is the real proof the wizard ran to the save).
     _dp=$(_strip_pty "$tmp/dpty.out")
     if printf '%s\n' "$_dp" | grep -q 'Illegal option'; then st=1
-    elif printf '%s\n' "$_dp" | grep -q 'route to): qlaude: token' \
+    elif printf '%s\n' "$_dp" | grep -q 'route to): qlaude: endpoint (read back)' \
         && printf '%s\n' "$_dp" | grep -q 'qlaude: model'; then st=0
     else st=1; fi
     t "dash wizard: hidden read works (no Illegal option), cursor kept" 0 $st
@@ -236,7 +236,7 @@ fi
 # concealment (all bytes land while ECHO is still on). This driver feeds each
 # line only when its prompt has appeared, so a broken stty -echo / read -s
 # leaves the token visibly echoed by the tty. Anti-vacuous: the endpoint line
-# IS echoed, proving tty echo is live when the token line goes in unechoed.
+
 # The settle sleep lets stty -echo land after the prompt print but before the
 # bytes arrive (sub-ms in practice; 150 ms covers any scheduler).
 _pty_seq() { # argv: cmd... — sequential prompt-driven feed, transcript out
@@ -290,8 +290,8 @@ if command -v python3 >/dev/null 2>&1; then
             "$_ch" "$tool" setup >"$tmp/seq_$_ch.out" 2>&1
         if grep -qF 'ptytoken-9x' "$tmp/seq_$_ch.out"; then st=1; else st=0; fi
         t "hidden token never echoed by the tty ($_ch child)" 0 $st
-        if grep -qF 'http://127.0.0.1:1' "$tmp/seq_$_ch.out"; then st=0; else st=1; fi
-        t "  anti-vacuous: endpoint line WAS echoed ($_ch, echo is live)" 0 $st
+        if grep -qF 'mymodel' "$tmp/seq_$_ch.out"; then st=0; else st=1; fi
+        t "  anti-vacuous: model line (typed post-restore) IS echoed ($_ch, echo live)" 0 $st
     done
 else
     echo "SKIP sequential echo tests (python3 missing)"

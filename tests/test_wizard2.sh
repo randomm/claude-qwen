@@ -180,6 +180,64 @@ except ChildProcessError:
     if [ -f "$tmp/pconf3/config.env" ] \
         && grep -qxF 'QLAUDE_TOKEN=ptytok-4f' "$tmp/pconf3/config.env"; then st=0; else st=1; fi
     t "  hidden stdin read still captured the token" 0 $st
+    # 4. audit a14: bytes that arrive at the tty BEFORE the hidden read
+    # disables echo are echoed by the line discipline no matter what the
+    # child does afterwards. Reactive injection at the FIRST visible byte is
+    # the worst case. The fix must put echo OFF before setup prints anything
+    # when a tty token read is coming.
+    mkdir -p "$tmp/pconf4"
+    printf 'appended prompt body\n' >"$tmp/pconf4/SYSTEM-PROMPT.md"
+    python3 -c '
+import os, pty, sys, time, select
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+log = b""
+first = b""
+deadline = time.time() + 8
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 0.2)
+    if r:
+        b = os.read(fd, 4096)
+        if not b:
+            break
+        first += b
+        if b"qlaude setup:" in first:
+            break
+try:
+    os.write(fd, b"PRETOK-9f\n")
+except OSError:
+    pass
+time.sleep(0.4)
+log = first
+while True:
+    r, _, _ = select.select([fd], [], [], 4.0)
+    if not r:
+        break
+    try:
+        b = os.read(fd, 4096)
+    except OSError:
+        break
+    if not b:
+        break
+    log += b
+sys.stdout.buffer.write(log); sys.stdout.buffer.flush()
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+' env -i PATH="$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
+        QLAUDE_CONFIG_DIR="$tmp/pconf4" QLAUDE_INSTALL_DIR="$tmp/bin" \
+        SHIM_LOG="$tmp/curl.argv" sh "$tool" setup -y --endpoint "$base" \
+        --token-stdin --model my-model --context 8192 --effort high \
+        --claude-bin "$tmp/bin/claude" >"$tmp/pty4.out" 2>&1 || true
+    if ! grep -qF 'PRETOK-9f' "$tmp/pty4.out"; then st=0; else st=1; fi
+    t "a14 reactive early token is never echoed (echo off before first byte)" 0 $st
+    if grep -q 'qlaude setup:' "$tmp/pty4.out"; then st=0; else st=1; fi
+    t "  anti-vacuous: intro reached (reactive window was live)" 0 $st
+    if [ -f "$tmp/pconf4/config.env" ] \
+        && grep -qxF 'QLAUDE_TOKEN=PRETOK-9f' "$tmp/pconf4/config.env"; then st=0; else st=1; fi
+    t "  early-injected token still captured to config (read not lost)" 0 $st
 fi
 
 exit "$fail"
