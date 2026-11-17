@@ -104,6 +104,12 @@ if [ "$st" -eq 2 ]; then st=0; else st=1; fi
 t "missing SYSTEM-PROMPT: exit 2 (prereq)" 0 $st
 if printf '%s\n' "$out" | grep -qi 'SYSTEM-PROMPT'; then st=0; else st=1; fi
 t "missing SYSTEM-PROMPT: named in the FAIL line" 0 $st
+# audit 2026-11-18: the remedy must be the one command that CAN create the
+# file (installer) — pointing at 'qlaude setup' here was a dead-end loop.
+if printf '%s\n' "$out" | grep -qi 'installer'; then st=0; else st=1; fi
+t "missing SYSTEM-PROMPT: FAIL names the installer as the remedy" 0 $st
+if printf '%s\n' "$out" | grep -qiE 'run[: ]+qlaude setup'; then st=1; else st=0; fi
+t "  FAIL no longer points at the command that cannot fix it" 0 $st
 mv "$tmp/sp.bak" "$conf/SYSTEM-PROMPT.md"
 
 # 4. Token hygiene (A4): the token appears in NO curl argv; it IS in the

@@ -182,7 +182,7 @@ step0_prereq() {
         return "$EXIT_PREREQ"
     fi
     [ -s "$QLAUDE_CONFDIR_RESOLVED/SYSTEM-PROMPT.md" ] || {
-        gline FAIL 0 prereqs "SYSTEM-PROMPT.md missing/empty → run: qlaude setup, or re-run the installer"
+        gline FAIL 0 prereqs "SYSTEM-PROMPT.md missing/empty → re-run the installer (README Quickstart one-liner); qlaude setup does not create this file"
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
@@ -547,7 +547,7 @@ cmd_launch() {
     if [ -s "$_sp" ]; then
         exec "$_abs" --append-system-prompt-file "$_sp" "$@"
     fi
-    err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (run: qlaude setup)"
+    err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (re-run the installer; setup does not create this file)"
     exec "$_abs" "$@"
 }
 # qlaude config — resolved state + shadowed report (§5.3); never the token (A4).
