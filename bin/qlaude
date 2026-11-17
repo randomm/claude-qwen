@@ -145,23 +145,183 @@ config_parse() {
     return 0
 }
 
-# Command bodies below are dispatch placeholders until their tasks land
-# (T3 launcher, T4 wizard, T5 gauntlet, T6 ensure-path/config).
+# Command bodies not yet built are dispatch placeholders (T4 wizard,
+# T5 gauntlet, T6 ensure-path + full config).
 not_implemented() {
     err "'$1' is not available in this build yet — see the qlaude issue tracker for its task"
     return "$EXIT_PREREQ"
 }
 
-cmd_launch() { not_implemented launch; }
 cmd_setup() { not_implemented setup; }
 cmd_doctor() { not_implemented doctor; }
-cmd_config() { not_implemented config; }
 cmd_ensure_path() { not_implemented ensure-path; }
+
+# --- launcher (spec §5.3)
+# The export set is the contract (A4): exactly these, no more.
+# shellcheck disable=SC2034  # the set is the spec §5.3 contract, read below
+QLAUDE_EXPORTS='ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS'
+
+# abs_exec <path-or-name> — echo an absolute executable path. A value with
+# a slash is resolved against the CWD and absolutized (a CWD-relative exec
+# string would let whoever controls the directory hijack the launch).
+abs_exec() {
+    _c=$1
+    case $_c in
+        */*)
+            if [ ! -x "$_c" ]; then
+                return 1
+            fi
+            case $_c in
+                /*) printf '%s\n' "$_c" ;;
+                *)
+                    _d=$(cd "${_c%/*}" 2>/dev/null && pwd) || return 1
+                    printf '%s/%s\n' "$_d" "${_c##*/}"
+                    ;;
+            esac
+            ;;
+        *) command -v "$_c" ;;
+    esac
+}
+
+# token_resolve — C6 ladder per spec §5.3 step 2: on macOS the KEYCHAIN
+# comes first (security -w prints to stdout: the token is never in argv,
+# only the service name); the QLAUDE_TOKEN file/env value is the fallback
+# everywhere and the only source off-Darwin. Echoes the token.
+token_resolve() {
+    if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
+        _t=$(security find-generic-password -s qlaude -w 2>/dev/null) || _t=''
+        if [ -n "$_t" ]; then
+            printf '%s' "$_t"
+            return 0
+        fi
+    fi
+    if [ -n "${QLAUDE_TOKEN:-}" ]; then
+        printf '%s' "$QLAUDE_TOKEN"
+        return 0
+    fi
+    return 1
+}
+
+token_source() { # label only — never the value (A4)
+    if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1 && \
+        security find-generic-password -s qlaude -w >/dev/null 2>&1; then
+        printf 'keychain'
+    elif [ -n "${QLAUDE_TOKEN:-}" ]; then
+        printf 'file-or-env'
+    else
+        printf 'unset'
+    fi
+}
+
+cmd_launch() {
+    _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
+    if [ ! -f "$_cf" ]; then
+        # §5.3 step 1: no config → go through setup, never half-launch.
+        cmd_setup
+        return $?
+    fi
+    if ! config_parse "$_cf"; then
+        # config_parse already printed the doctor-style fix message (§5.3.5).
+        return 1
+    fi
+    _tok=$(token_resolve) || {
+        err "no token configured — run: qlaude setup"
+        return 1
+    }
+
+    # qlaude-always-wins: unconditional exports, predictability over
+    # inheritance (the README's manual block stays the bypass).
+    export ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT"
+    case $QLAUDE_AUTH in
+        bearer)
+            export ANTHROPIC_AUTH_TOKEN="$_tok"
+            unset ANTHROPIC_API_KEY
+            ;;
+        api-key)
+            export ANTHROPIC_API_KEY="$_tok"
+            unset ANTHROPIC_AUTH_TOKEN
+            ;;
+    esac
+    export ANTHROPIC_MODEL="$QLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$QLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$QLAUDE_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$QLAUDE_MODEL"
+    export CLAUDE_CODE_AUTO_MODE_MODEL="$QLAUDE_MODEL"
+    export CLAUDE_CODE_BG_CLASSIFIER_MODEL="$QLAUDE_MODEL"
+    export CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$QLAUDE_CONTEXT_TOKENS"
+
+    # A stale server-check kill switch must not silently defeat the pins
+    # (README: this build has no local fallback).
+    if [ "${CLAUDE_CODE_AUTO_MODE_SERVER:-}" = 0 ]; then
+        err "warning: CLAUDE_CODE_AUTO_MODE_SERVER=0 disables server checks and this build has no local fallback — auto mode would degrade to asking approval for every checked action; unsetting it for the child (see README auto-mode section)"
+        unset CLAUDE_CODE_AUTO_MODE_SERVER
+    fi
+
+    if [ "${QLAUDE_DEBUG:-}" = env ]; then
+        # A4: the list itself is the assertion target; token value redacted.
+        # Values come from the shell's own parameters — never an external
+        # printenv, whose child would inherit the exported token (§5.3/A4).
+        err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+        case $QLAUDE_AUTH in
+            bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;;
+            api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;;
+        esac
+        err "export ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
+        err "export ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
+        err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL"
+        err "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        err "export CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
+        err "export CLAUDE_CODE_BG_CLASSIFIER_MODEL=$CLAUDE_CODE_BG_CLASSIFIER_MODEL"
+        err "export CLAUDE_CODE_EFFORT_LEVEL=$CLAUDE_CODE_EFFORT_LEVEL"
+        err "export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+    fi
+
+    _bin=${QLAUDE_CLAUDE_BIN:-claude}
+    _abs=$(abs_exec "$_bin") || {
+        err "claude bin not found ('$_bin') — install Claude Code, or set QLAUDE_CLAUDE_BIN"
+        return "$EXIT_CLI"
+    }
+    _sp="$QLAUDE_CONFDIR_RESOLVED/SYSTEM-PROMPT.md"
+    if [ -s "$_sp" ]; then
+        exec "$_abs" --append-system-prompt-file "$_sp" "$@"
+    fi
+    err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (run: qlaude setup)"
+    exec "$_abs" "$@"
+}
+
+# qlaude config — resolved state; full form lands with T6, the shadowed
+# report (spec §5.3) is contract here. Never the token value (A4).
+cmd_config() {
+    _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
+    if [ ! -f "$_cf" ]; then
+        err "no config at $_cf — run: qlaude setup"
+        return 1
+    fi
+    if ! config_parse "$_cf"; then
+        return 1
+    fi
+    printf 'CONFDIR=%s\nINSTALLDIR=%s\nendpoint=%s\nmodel=%s\nauth=%s\ncontext=%s\neffort=%s\nclaude_bin=%s\ntoken=%s\n' \
+        "$QLAUDE_CONFDIR_RESOLVED" "$QLAUDE_INSTALLDIR_RESOLVED" \
+        "$QLAUDE_ENDPOINT" "$QLAUDE_MODEL" "$QLAUDE_AUTH" \
+        "$QLAUDE_CONTEXT_TOKENS" "$QLAUDE_EFFORT" \
+        "${QLAUDE_CLAUDE_BIN:-claude}" "$(token_source)"
+    for _n in $QLAUDE_EXPORTS; do
+        if [ -n "$(printenv "$_n")" ]; then
+            printf 'shadowed-inherited=%s\n' "$_n"
+        fi
+    done
+}
 
 main() {
     _cmd=${1:-}
     case $_cmd in
-        '' | launch) cmd_launch ;;
+        '') cmd_launch "$@" ;;
+        launch)
+            shift
+            cmd_launch "$@"
+            ;;
+        --) cmd_launch "$@" ;;
         setup) cmd_setup ;;
         doctor) cmd_doctor ;;
         config) cmd_config ;;
