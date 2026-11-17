@@ -9,6 +9,7 @@ set -u
 say() { printf 'qlaude install: %s\n' "$*"; }
 err() { printf 'qlaude install: %s\n' "$*" >&2; }
 
+EXIT_USAGE=1  # spec §5.5 exit map (shared with bin/qlaude)
 EXIT_PREREQ=2
 EXIT_TOOL=5
 
@@ -16,6 +17,12 @@ EXIT_TOOL=5
 QLAUDE_BASE_URL=${QLAUDE_BASE_URL:-https://raw.githubusercontent.com/randomm/claude-qwen}
 QLAUDE_REF=${QLAUDE_REF:-main}
 INSTALLDIR=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
+# audit a10: a relative install dir lands in PATH as a relative entry — every
+# future shell resolves it against its own cwd. Absolute only, checked pre-fetch.
+case $INSTALLDIR in
+    /*) ;;
+    *) err "QLAUDE_INSTALL_DIR must be an absolute path, got '$INSTALLDIR'"; exit "$EXIT_USAGE" ;;
+esac
 CONFDIR=${QLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/qlaude}
 
 # --- OS check

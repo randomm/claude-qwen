@@ -25,8 +25,7 @@ err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
 # prompt — interactive question, cursor stays on the prompt line (unlike err).
 prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
 _hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
-# it ("Illegal option -s" — ubuntu-latest CI, /bin/sh IS dash); probe exits 1
-# (EOF, not "illegal"=2) to accept the flag, else stty -echo + signal trap.
+# it ("Illegal option -s" — CI /bin/sh IS dash); probe exits 1 (EOF not illegal=2), else stty -echo + traps.
     # shellcheck disable=SC3045
     if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
     else
@@ -121,9 +120,8 @@ config_parse() {
     fi
     return 0
 }
-# ensure-path (§5.7): one marker-delimited block in the user's rc file,
-# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else Darwin →
-# ~/.zprofile, Linux → ~/.profile. Append-only; foreign marker block = refuse.
+# ensure-path (§5.7): one marker block in the rc file chosen by shell/OS (zsh→zprofile
+# both OSes; else Darwin→zprofile, Linux→profile). Append-only; foreign block = refuse.
 cmd_ensure_path() {
     _dry=''
     case ${1:-} in
@@ -136,7 +134,15 @@ cmd_ensure_path() {
     else
         _f="$HOME/.profile"
     fi
-    _exp="export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
+    # audit a10: relative PATH entry = each future cwd (attacker dir + cd + login = exec) — absolute only.
+    case $QLAUDE_INSTALLDIR_RESOLVED in
+        /*) ;;
+        *) err "ensure-path: QLAUDE_INSTALL_DIR must be an absolute path"; return "$EXIT_USAGE" ;;
+    esac
+    # audit a7: value lands double-quoted in a login-sourced rc — escape \ " $ ` so `"; cmd; #` stays inert.
+    # shellcheck disable=SC2016  # $ and ` quoted on purpose — sed must see them literally
+    _esc=$(printf '%s' "$QLAUDE_INSTALLDIR_RESOLVED" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g')
+    _exp="export PATH=\"$_esc:\$PATH\""
     if [ -f "$_f" ] && grep -q '^# qlaude PATH$' "$_f"; then
         if grep -qxF "$_exp" "$_f"; then
             err "ensure-path: already configured in $_f"
@@ -162,8 +168,7 @@ usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
                     [--effort E] [--claude-bin P] [--token-stdin]
 USAGE
 }
-# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
-# stderr; exit per table; NO set -e here (rule).
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status on stderr; exit per table; NO set -e.
 gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
 step0_prereq() {
     case $(uname) in
@@ -183,8 +188,7 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
-# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows
-# the one printed 404 auto-fix.
+# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows the one 404 auto-fix.
 step1_messages() {
     if [ -z "${_G_TOK:-}" ]; then
         gline FAIL 1 messages "no token configured → run: qlaude setup"
@@ -230,8 +234,7 @@ EOF
 }
 # step2/step3: isolated HOME per spawn (C7): user ~/.claude.json excluded.
 step2_claude() {
-    # §5.5: on failure the probe's own text is surfaced VERBATIM (auth/login/
-    # env diagnosis is doctor's job, not the user's rerun chore).
+    # §5.5: on failure the probe's text surfaces VERBATIM (diagnosis is doctor's job, not a rerun chore).
     _o=$(_probe_claude "Reply with exactly: OK" 1)
     if printf '%s\n' "$_o" | grep -q OK; then
         gline PASS 2 claude "echoed OK"; return 0
@@ -321,8 +324,7 @@ EOF
 ) || return 1
     case $_pout in
         *200)
-            # tolerant of whitespace around ':'; ids are SERVER-CONTROLLED —
-            # filtered to printable ASCII before display (no escape injection).
+            # whitespace-tolerant; ids are SERVER-CONTROLLED — printable-ASCII filter before display (no escape injection).
             printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
                 sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
@@ -430,8 +432,7 @@ cmd_setup() {
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
     fi
-    # C6 §5.4: on macOS the token goes to the Keychain, piped on STDIN (never
-    # argv — G4); a locked/odd keychain notes + degrades to the 0600 file.
+    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file.
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
@@ -531,8 +532,7 @@ cmd_launch() {
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: this list is the assertion target; values come from the shell's
-        # own params — a printenv child would inherit the exported token.
+        # A4: assertion target; values from own params (a printenv child would inherit the token).
         case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
         err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
         err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
@@ -592,8 +592,7 @@ main() {
             ;;
     esac
 }
-# Run only as a program; sourcing (tests) exposes functions without main.
-# Piped `sh -s` gives an empty/bare-shell $0 — those count as invocation.
+# Run only as a program; sourcing (tests) exposes functions. Piped `sh -s` (empty/bare $0) counts as invocation.
 case $0 in
     '' | */qlaude | qlaude | sh | -sh | dash | -dash | bash | -bash)
         main "$@"
