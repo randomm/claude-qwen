@@ -138,6 +138,20 @@ setup was broken, so old errors keep appearing.
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Declares the real context window for model ids Claude Code does not recognize | compaction triggers at the assumed 1M; requests fail with HTTP 400 past the server's real limit. Never set it above `--max-model-len` |
 | `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model on your endpoint, falls back, and shows the auto-mode eligibility notice once per day. See [Auto mode](#auto-mode-and-the-safety-classifier) |
 
+### Installer coordinates (optional)
+
+`install.sh` reads four optional variables — a normal install sets none:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/randomm/claude-qwen` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
+| `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a release with `QLAUDE_REF=v0.1.0` (the CI pins it to the PR commit) |
+| `QLAUDE_INSTALL_DIR` | `~/.local/bin` | Where `qlaude` lands. Must be an absolute path (a relative entry in PATH resolves against every future shell's cwd) |
+| `QLAUDE_CONFIG_DIR` | `~/.config/qlaude` | Where `config.env` (mode 0600) and `SYSTEM-PROMPT.md` live |
+
+These are installer knobs only — the launch-time variables that actually
+shape traffic are the ones in [Why each variable matters](#why-each-variable-matters).
+
 ## Verify, in this order
 
 ```bash
