@@ -279,8 +279,10 @@ _probe_claude() {
             api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
             *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
+        # effort mirrors launch (§5.3): unset here meant Claude Code's default 'high'
+        # hit low|medium|xhigh servers → 400 → false FAIL 2 (dogfood 2026-11-17).
         export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
-            ANTHROPIC_MODEL="$QLAUDE_MODEL"
+            ANTHROPIC_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
         if [ -n "${3:-}" ]; then
             exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" \
                 --max-turns "$2" --allowedTools "$3"
