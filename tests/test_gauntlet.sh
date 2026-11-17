@@ -207,8 +207,9 @@ if grep -qxF -- '--allowedTools' "$tmp/claude3.argv" && \
    grep -qxF 'Bash(echo QLAUDE_TOOL_OK)' "$tmp/claude3.argv"; then st=0; else st=1; fi
 t "step 3: --allowedTools contract verbatim" 0 $st
 
-# 9. Step 4 is warn-only (plan T5): proxy pollution + stale AUTO_MODE_SERVER
-# produce warnings, never a failing exit.
+# 9. Step 4 is warn-only (plan T5): proxy pollution warns, never fails; and
+# CLAUDE_CODE_AUTO_MODE_SERVER=0 is qlaude's DESIGN state now (docs 2026-11),
+# so it must NOT be warned about anymore.
 out=$(HTTPS_PROXY=http://proxy:3128 CLAUDE_CODE_AUTO_MODE_SERVER=0 \
     QLAUDE_STUB=1 run_doc 2>&1)
 st=$?
@@ -216,8 +217,8 @@ if [ "$st" -eq 0 ]; then st=0; else st=1; fi
 t "step 4 pollution: warn-only, exit 0" 0 $st
 if printf '%s\n' "$out" | grep -qi 'proxy'; then st=0; else st=1; fi
 t "step 4: proxy pollution warned" 0 $st
-if printf '%s\n' "$out" | grep -qi 'AUTO_MODE_SERVER'; then st=0; else st=1; fi
-t "step 4: stale AUTO_MODE_SERVER warned" 0 $st
+if printf '%s\n' "$out" | grep -qi 'AUTO_MODE_SERVER'; then st=1; else st=0; fi
+t "step 4: AUTO_MODE_SERVER=0 is the design state — not warned" 0 $st
 
 # 10b (security review): relative-with-slash QLAUDE_CLAUDE_BIN must reach
 # the exec via an ABSOLUTE path (same hijack class as the launcher fix).

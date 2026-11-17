@@ -129,15 +129,16 @@ _cnt=$(printf '%s\n' "$out" | grep -oE '(ANTHROPIC|CLAUDE_CODE)_[A-Z_]+' | sort 
 if [ "$_cnt" -eq 10 ]; then st=0; else st=1; fi
 t "debug env: export set is exactly the spec §5.3 names" 0 $st
 
-# 7. Pre-set CLAUDE_CODE_AUTO_MODE_SERVER=0: warned and unset for the child.
+# 7. Contract flipped (docs auto-mode-classifier-billing, 2026-11): the launcher
+# always wins with =0 (endpoint cannot return safeguard_results); no warning.
 env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
     QLAUDE_CONFIG_DIR="$conf" QLAUDE_INSTALL_DIR="$tmp/bin" \
     SHIM_ARGV="$tmp/argv" SHIM_ENV="$tmp/env" \
-    CLAUDE_CODE_AUTO_MODE_SERVER=0 sh "$tool" 2>"$tmp/ams.err"
-grep -qi 'AUTO_MODE_SERVER' "$tmp/ams.err"
-t "AUTO_MODE_SERVER=0: warning printed" 0 $?
-if grep -q '^CLAUDE_CODE_AUTO_MODE_SERVER=' "$tmp/env"; then st=1; else st=0; fi
-t "AUTO_MODE_SERVER=0: unset for the child" 0 $st
+    CLAUDE_CODE_AUTO_MODE_SERVER=1 sh "$tool" 2>"$tmp/ams.err"
+if grep -qxF 'CLAUDE_CODE_AUTO_MODE_SERVER=0' "$tmp/env"; then st=0; else st=1; fi
+t "AUTO_MODE_SERVER pre-set: 0 wins for the child (always-wins)" 0 $st
+if grep -qiE 'degrade|no local fallback' "$tmp/ams.err"; then st=1; else st=0; fi
+t "AUTO_MODE_SERVER: no degradation warning (docs: own classifier, billed)" 0 $st
 
 # 8. Missing SYSTEM-PROMPT.md: one-line note, launch continues (never dies).
 # Review finding: st must capture the GREP status — the command

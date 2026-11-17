@@ -57,7 +57,7 @@ config_parse() {
         err "no config at $_file — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
-    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0  # corrupted lines: line NUMBER only (G4)
+    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _ams='' _n=0  # corrupted lines: line NUMBER only (G4)
     while IFS= read -r _line || [ -n "$_line" ]; do
         _n=$((_n + 1))
         _line=${_line%"$(printf '\r')"}  # a15: tolerate one trailing CR (CRLF files); $'…' banned by C1
@@ -87,6 +87,7 @@ config_parse() {
             QLAUDE_EFFORT) _ef=$_val ;;
             QLAUDE_CLAUDE_BIN) _cb=$_val ;;
             QLAUDE_TOKEN) _tk=$_val ;;
+            QLAUDE_AUTO_MODE_SERVER) _ams=$_val ;;
             *) : ;; # well-formed unknown keys are forward-compatible
         esac
     done <"$_file"
@@ -98,6 +99,7 @@ config_parse() {
     if [ -z "${QLAUDE_EFFORT:-}" ]; then QLAUDE_EFFORT=$_ef; fi
     if [ -z "${QLAUDE_CLAUDE_BIN:-}" ]; then QLAUDE_CLAUDE_BIN=$_cb; fi
     if [ -z "${QLAUDE_TOKEN:-}" ]; then QLAUDE_TOKEN=$_tk; fi
+    if [ -z "${QLAUDE_AUTO_MODE_SERVER:-}" ]; then QLAUDE_AUTO_MODE_SERVER=$_ams; fi
     case $QLAUDE_AUTH in
         '' | bearer | api-key) ;;
         *) err "config corrupted (invalid QLAUDE_AUTH value) — run: qlaude setup"; return "$EXIT_USAGE" ;;
@@ -258,10 +260,6 @@ step4_info() { # informational only, never fails (spec §5.5)
     _w=''
     if [ -n "${HTTPS_PROXY:-}" ] && [ -z "${NODE_USE_ENV_PROXY:-}" ]; then
         gline WARN 4 proxy "HTTPS_PROXY set without NODE_USE_ENV_PROXY → Node may ignore it (README proxy row)"
-        _w=1
-    fi
-    if [ "${CLAUDE_CODE_AUTO_MODE_SERVER:-}" = 0 ]; then
-        gline WARN 4 auto-mode "stale CLAUDE_CODE_AUTO_MODE_SERVER=0 → unset it (README auto-mode row)"
         _w=1
     fi
     [ -n "${CLAUDE_CODE_BG_CLASSIFIER_MODEL:-}" ] || {
@@ -526,11 +524,7 @@ cmd_launch() {
         ANTHROPIC_DEFAULT_SONNET_MODEL="$QLAUDE_MODEL" ANTHROPIC_DEFAULT_HAIKU_MODEL="$QLAUDE_MODEL"
     export CLAUDE_CODE_AUTO_MODE_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_BG_CLASSIFIER_MODEL="$QLAUDE_MODEL" \
         CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT" CLAUDE_CODE_MAX_CONTEXT_TOKENS="$QLAUDE_CONTEXT_TOKENS"
-    # stale kill switch must not silently defeat the pins (README).
-    if [ "${CLAUDE_CODE_AUTO_MODE_SERVER:-}" = 0 ]; then
-        err "warning: CLAUDE_CODE_AUTO_MODE_SERVER=0 disables server checks and this build has no local fallback — auto mode would degrade to asking approval for every checked action; unsetting it for the child (see README auto-mode section)"
-        unset CLAUDE_CODE_AUTO_MODE_SERVER
-    fi
+    case ${QLAUDE_AUTO_MODE_SERVER:-off} in on) : ;; *) export CLAUDE_CODE_AUTO_MODE_SERVER=0 ;; esac  # docs: endpoint cannot return safeguard_results; opt-in on for pass-through gateways (README auto-mode row)
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
         # A4: assertion target; values from own params (a printenv child would inherit the token).
         case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
