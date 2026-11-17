@@ -32,6 +32,7 @@ conf="$tmp/conf"
 mkdir -p "$conf" "$tmp/bin"
 # env-dumping shim: records EVERY spawned probe child's environment
 # dump ONLY probe-style spawns (-p prompts): _probe_claude's contract scope
+# shellcheck disable=SC2016  # $* / $PROBE_DUMP are literal shim-source text
 printf '#!/bin/sh\ncase "$*" in\n -p\ *) env >> "$PROBE_DUMP"\nesac\ncase "$*" in\n *QLAUDE_TOOL_OK*) echo QLADE_TOOL_OK ;;\n *) echo OK\nesac\n' >"$tmp/bin/claude"
 chmod +x "$tmp/bin/claude"
 
