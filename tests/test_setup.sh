@@ -129,8 +129,7 @@ t "unknown flag: usage + exit 1" 0 $st
 # endpoint BEFORE the token — a blind "token?" with zero context is a bug.
 # Non-TTY case pins the intro line (printed before the token gate).
 out=$(run_setup </dev/null 2>&1)
-if printf '%s\n' "$out" | grep -q 'config.env'; then st=0; else st=1; fi
-t "wizard intro names the config file" 0 $st
+if printf '%s\n' "$out" | grep -q 'config.env'; then st=0; else st=1; fi; t "wizard intro names the config file" 0 $st
 if printf '%s\n' "$out" | grep -q '0600'; then st=0; else st=1; fi
 t "wizard intro states 0600 storage (A4 promise)" 0 $st
 # PTY case pins the prompt ORDER: endpoint URL before the token prompt.
@@ -169,12 +168,12 @@ sys.exit(st >> 8 if (st & 0xFF) == 0 else 1)
 ' "$@"
 }
 if command -v python3 >/dev/null 2>&1; then
-    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+    # feed: ep, token, model, Enter@context, Enter@effort
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n\n\n' | \
         _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/pconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
             sh "$tool" setup >"$tmp/pty.out" 2>&1 || true
-    _e=$(grep -n 'endpoint URL' "$tmp/pty.out" | head -1 | cut -d: -f1)
-    _tk=$(grep -n 'token for http://127.0.0.1:1' "$tmp/pty.out" | head -1 | cut -d: -f1)
+    _e=$(grep -n 'endpoint URL' "$tmp/pty.out" | head -1 | cut -d: -f1); _tk=$(grep -n 'token for http://127.0.0.1:1' "$tmp/pty.out" | head -1 | cut -d: -f1)
     # -le: with the cursor-preserving prompts both can land on ONE line;
     # endpoint must never come AFTER the token prompt.
     if [ -n "$_e" ] && [ -n "$_tk" ] && [ "$_e" -le "$_tk" ]; then st=0; else st=1; fi
@@ -213,7 +212,7 @@ fi
 # /bin/sh IS dash; the host /bin/sh being bash hid this until T8). Pin the
 # stty-fallback path on every host: same pty scenario with child = dash.
 if command -v python3 >/dev/null 2>&1 && command -v dash >/dev/null 2>&1; then
-    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n' | \
+    printf 'http://127.0.0.1:1\nptytoken-9x\nmymodel\n\n\n' | \
         _pty_run env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/dconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
             dash "$tool" >"$tmp/dpty.out" 2>&1
@@ -269,8 +268,9 @@ rd(b"token for")
 time.sleep(0.15)
 os.write(fd, b"ptytoken-9x\n")
 rd(b"qlaude: model")
-os.write(fd, b"mymodel\n")
-rd(b"saved")
+os.write(fd, b"mymodel\n"); rd(b"context window")
+os.write(fd, b"\n"); rd(b"effort")
+os.write(fd, b"\n"); rd(b"saved")
 sys.stdout.buffer.write(log)
 sys.stdout.buffer.flush()
 try:
@@ -281,7 +281,10 @@ except ChildProcessError:
 }
 if command -v python3 >/dev/null 2>&1; then
     for _ch in sh dash; do
-        [ "$_ch" = dash ] && ! command -v dash >/dev/null 2>&1 && continue
+        if [ "$_ch" = dash ] && ! command -v dash >/dev/null 2>&1; then
+            echo "SKIP sequential echo test (dash child: dash missing)"
+            continue
+        fi
         _pty_seq env -i PATH=/usr/bin:/bin HOME="$tmp" \
             QLAUDE_CONFIG_DIR="$tmp/seq_$_ch" QLAUDE_INSTALL_DIR="$tmp/bin" \
             "$_ch" "$tool" setup >"$tmp/seq_$_ch.out" 2>&1
@@ -293,6 +296,78 @@ if command -v python3 >/dev/null 2>&1; then
 else
     echo "SKIP sequential echo tests (python3 missing)"
 fi
+
+# 10. macOS keychain WRITE (spec C6 §5.4): setup on Darwin must store the
+# token via `security add-generic-password -U ... -w` with the token on
+# STDIN (never argv — G4), keep it out of config.env, and degrade to the
+# file with a printed note when the keychain write fails. PATH-shims:
+# uname->Darwin + a security shim that persists stdin (round-trip: its
+# find-generic-password answers back from that file, so the gauntlet
+# tail passes exactly as it would on a real Mac).
+mkdir -p "$tmp/macok" "$tmp/macfail"
+_real_uname=$(command -v uname)
+for _d in "$tmp/macok" "$tmp/macfail"; do
+    printf '#!/bin/sh\ncase "$*" in "") echo Darwin;; *) exec %s "$@";; esac\n' \
+        "$_real_uname" >"$_d/uname"
+done
+# shellcheck disable=SC2016  # shim body quotes are intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
+    'case "$1" in' \
+    'add-generic-password) cat >> "$SEC_STDIN"; exit 0;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'esac' 'exit 0' >"$tmp/macok/security"
+# shellcheck disable=SC2016  # shim body quotes are intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
+    'case "$1" in' \
+    'add-generic-password) exit 1;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'esac' 'exit 0' >"$tmp/macfail/security"
+chmod +x "$tmp"/macok/* "$tmp"/macfail/*
+run_mac() { # $1 = shim dir; rest = setup args; token on our stdin
+    _shim=$1; shift
+    env -i PATH="$_shim:$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
+        QLAUDE_CONFIG_DIR="$wconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
+        SEC_ARGV="$tmp/sec.argv" SEC_STDIN="$tmp/sec.stdin" \
+        SHIM_LOG="$tmp/curl.argv3" \
+        sh "$tool" setup "$@"
+}
+: >"$tmp/sec.argv"; : >"$tmp/sec.stdin"; rm -f "$wconf/config.env"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macok" -y \
+    --endpoint "$base" --token-stdin --model my-model \
+    --claude-bin "$tmp/bin/claude" 2>&1); _kcrc=$?
+if [ "$_kcrc" -eq 0 ]; then st=0; else st=1; fi
+t "mac keychain: setup -y exits 0 (round-trip gauntlet passed)" 0 $st
+if printf '%s\n' "$out" | grep -q 'Keychain'; then st=0; else st=1; fi
+t "mac keychain: printed the keychain note" 0 $st
+if [ -f "$wconf/config.env" ] \
+    && ! grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
+t "mac keychain: token NOT left in config.env when keychain holds it" 0 $st
+if grep -qF "$QLAUDE_CI_TOKEN" "$tmp/sec.stdin"; then st=0; else st=1; fi
+t "mac keychain: token was piped on security stdin (round-trip real)" 0 $st
+if ! grep -qF "$QLAUDE_CI_TOKEN" "$tmp/sec.argv"; then st=0; else st=1; fi
+t "mac keychain: token NEVER in security argv (C6/G4)" 0 $st
+# locked/odd keychain: add fails -> file fallback WITH a printed note.
+: >"$tmp/sec.argv"; rm -f "$wconf/config.env" "$tmp/sec.stdin"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macfail" -y \
+    --endpoint "$base" --token-stdin --model my-model \
+    --claude-bin "$tmp/bin/claude" 2>&1); _frc=$?
+if [ "$_frc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
+t "mac keychain: write failure degrades to 0600 file, still exits 0" 0 $st
+if printf '%s\n' "$out" | grep -qiE 'fall.?back|file'; then st=0; else st=1; fi
+t "mac keychain: degradation printed a note (never silent, never hard-fail)" 0 $st
+# CI macos-15 reality (run 23f1d61): add succeeds, find does NOT. The keychain
+# is trusted only if write AND read-back agree; find-fail must degrade to file.
+mkdir -p "$tmp/macrebad"
+printf '#!/bin/sh\ncase "$*" in "") echo Darwin;; *) exec %s "$@";; esac\n' "$_real_uname" >"$tmp/macrebad/uname"
+# shellcheck disable=SC2016  # shim body quotes intentional (runtime vars)
+printf '%s\n' '#!/bin/sh' 'case "$1" in' 'add-generic-password) cat >/dev/null; exit 0;;' 'find-generic-password) exit 1;;' 'esac' 'exit 0' >"$tmp/macrebad/security"
+chmod +x "$tmp/macrebad/"*
+: >"$tmp/sec.argv"; rm -f "$wconf/config.env" "$tmp/sec.stdin"
+out=$(printf '%s\n' "$QLAUDE_CI_TOKEN" | run_mac "$tmp/macrebad" -y --endpoint "$base" --token-stdin --model my-model --claude-bin "$tmp/bin/claude" 2>&1); _rrc=$?
+if [ "$_rrc" -eq 0 ] && grep -qF "$QLAUDE_CI_TOKEN" "$wconf/config.env"; then st=0; else st=1; fi
+t "mac keychain: add-ok/find-fail (CI macos-15) degrades to file, exit 0" 0 $st
+if printf '%s\n' "$out" | grep -q 'Keychain'; then st=1; else st=0; fi
+t "mac keychain: find-fail never claims keychain storage (anti-vacuous)" 0 $st
 
 # 9. Terminal escape injection (security review): a hostile endpoint's
 # model ids are SERVER-CONTROLLED — the discovered-models line must not
