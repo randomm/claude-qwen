@@ -240,4 +240,14 @@ except ChildProcessError:
     t "  early-injected token still captured to config (read not lost)" 0 $st
 fi
 
+# audit 2026-11-18: 401 from the model probe must name the TOKEN, not reachability.
+mkdir -p "$tmp/pconf8"
+printf 'appended prompt body\n' >"$tmp/pconf8/SYSTEM-PROMPT.md"
+out=$(printf 'wrong-token-42\n' | _run "$tmp/pconf8" -y --endpoint "$base" \
+    --model stub-model --token-stdin --claude-bin "$tmp/bin/claude" 2>&1)
+if printf '%s\n' "$out" | grep -q 'rejected the token'; then st=0; else st=1; fi
+t "probe 401: note names the token, not reachability" 0 $st
+if printf '%s\n' "$out" | grep -q 'unreachable'; then st=1; else st=0; fi
+t "  probe 401: no false 'unreachable' claim" 0 $st
+
 exit "$fail"
