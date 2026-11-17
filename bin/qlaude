@@ -4,6 +4,8 @@
 # Strict POSIX sh (C1); never eval config, no set -x anywhere (§6).
 set -u
 QLAUDE_VERSION=0.0.1
+# audit a15: one trailing CR per config line is tolerated (CRLF files); $'…' banned by C1 so it comes from printf.
+QL_CR=$(printf '\r')
 # --- paths (spec §0): constants are API; tests read them directly.
 # shellcheck disable=SC2034
 QLAUDE_INSTALLDIR_RESOLVED=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
@@ -57,10 +59,10 @@ config_parse() {
         err "no config at $_file — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
-    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0
-    # corrupted lines may carry the token (G4): print line NUMBER only.
+    _ep='' _md='' _au='' _ct='' _ef='' _cb='' _tk='' _n=0  # corrupted lines: line NUMBER only (G4)
     while IFS= read -r _line || [ -n "$_line" ]; do
         _n=$((_n + 1))
+        _line=${_line%"$QL_CR"}
         case $_line in
             '' | '#'*) continue ;;
         esac
@@ -87,7 +89,7 @@ config_parse() {
             QLAUDE_EFFORT) _ef=$_val ;;
             QLAUDE_CLAUDE_BIN) _cb=$_val ;;
             QLAUDE_TOKEN) _tk=$_val ;;
-            *) : ;; # unknown but well-formed keys are forward-compatible
+            *) : ;; # well-formed unknown keys are forward-compatible
         esac
     done <"$_file"
     # an already-set (non-empty) QLAUDE_* env beats the file
@@ -162,8 +164,7 @@ usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
                     [--effort E] [--claude-bin P] [--token-stdin]
 USAGE
 }
-# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
-# stderr; exit per table; NO set -e here (rule).
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status on stderr; exit per table; NO set -e.
 gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
 step0_prereq() {
     case $(uname) in
@@ -592,8 +593,7 @@ main() {
             ;;
     esac
 }
-# Run only as a program; sourcing (tests) exposes functions without main.
-# Piped `sh -s` gives an empty/bare-shell $0 — those count as invocation.
+# Run only as a program; sourcing (tests) exposes functions. Piped `sh -s` (empty/bare $0) counts as invocation.
 case $0 in
     '' | */qlaude | qlaude | sh | -sh | dash | -dash | bash | -bash)
         main "$@"
