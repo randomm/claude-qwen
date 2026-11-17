@@ -37,6 +37,10 @@ printf '#!/bin/sh\ncase "$*" in\n *QLAUDE_TOOL_OK*) echo QLADE_TOOL_OK ;;\n *) e
 chmod +x "$tmp/bin/claude"
 
 _esc=$(printf '\033')
+_esc_strip() { # remove qlaude's OWN color codes — ESC there is legitimate;
+# the a4 defect is ESC bytes coming from DATA (the endpoint value).
+    LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$1" >"$1.clean"
+}
 _pty() { # feed=$1 feedfile cmd... — child gets a pty; feed written after a
 # settle delay regardless of output (hidden reads print NOTHING); child is
 # killed if it outlives the capture window so the suite cannot hang.
@@ -100,7 +104,8 @@ chmod 600 "$conf/config.env"
 printf 'tok123\n' >"$tmp/feed1"
 _pty "$tmp/feed1" env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
     QLAUDE_CONFIG_DIR="$conf" QLAUDE_STUB=1 sh "$tool" setup -y </dev/null
-if ! grep -q "$_esc" "$tmp/pty.out"; then st=0; else st=1; fi
+_esc_strip "$tmp/pty.out"
+if ! grep -q "$_esc" "$tmp/pty.out.clean"; then st=0; else st=1; fi
 t "a4 endpoint escape bytes never reach the terminal (preview+prompt filtered)" 0 $st
 # anti-vacuous: the transcript really surfaced the endpoint context
 if grep -q 'token for' "$tmp/pty.out"; then st=0; else st=1; fi
@@ -116,7 +121,8 @@ chmod 600 "$conf3/config.env"
 printf 'tok123\n' >"$tmp/feed1b"
 _pty "$tmp/feed1b" env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
     QLAUDE_CONFIG_DIR="$conf3" QLAUDE_STUB=1 sh "$tool" setup -y
-if ! grep -q "$_esc" "$tmp/pty.out" && grep -q 'token for' "$tmp/pty.out"; then st=0; else st=1; fi
+_esc_strip "$tmp/pty.out"
+if ! grep -q "$_esc" "$tmp/pty.out.clean" && grep -q 'token for' "$tmp/pty.out"; then st=0; else st=1; fi
 t "a4 token-prompt path: labelled prompt printed, still zero ESC bytes" 0 $st
 
 # --- a5: stty missing => loud refusal, never a silent echoed read.
