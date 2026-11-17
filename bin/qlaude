@@ -24,13 +24,23 @@ C_RESET=''
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }
 # prompt — interactive question, cursor stays on the prompt line (unlike err).
 prompt() { printf '%sqlaude: %s%s' "$C_ERR" "$*" "$C_RESET" >&2; }
+# audit a4: values that arrived via file/env are untrusted even when WE echoed
+# them once — filter to printable ASCII before any prompt/preview echo.
+_asc() { printf '%s' "$1" | LC_ALL=C tr -cd '\040-\176'; }
 _hidden_read() { # VAR — hidden stdin line. read -s is NOT POSIX: dash dies on
-# it ("Illegal option -s" — ubuntu-latest CI, /bin/sh IS dash); probe exits 1
-# (EOF, not "illegal"=2) to accept the flag, else stty -echo + signal trap.
+# it ("Illegal option -s" — CI /bin/sh IS dash); probe exits 1 (EOF not illegal=2), else stty fallback below.
     # shellcheck disable=SC3045
     if (IFS= read -rs _hr </dev/null) 2>/dev/null || [ $? -eq 1 ]; then IFS= read -rs "$1"
+    elif command -v stty >/dev/null 2>&1 && stty -echo 2>/dev/null; then
+        # audit a17: the trap must EXIT (130), not just restore — dash lets a
+        # trapped signal return from read, and falling through blames the user.
+        trap 'stty echo 2>/dev/null; exit 130' INT TERM
+        IFS= read -r "$1"; _hr_st=$?; trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
     else
-        stty -echo 2>/dev/null; trap 'stty echo 2>/dev/null' INT TERM; IFS= read -r "$1"; _hr_st=$?; trap - INT TERM; stty echo 2>/dev/null; return "$_hr_st"
+        # audit a5: never read with ECHO ON silently — abort loudly, alternatives only.
+        stty echo 2>/dev/null
+        err "cannot hide input (stty unavailable) — pipe via --token-stdin or set QLAUDE_TOKEN"
+        return 1
     fi
 }
 usage() {
@@ -121,9 +131,8 @@ config_parse() {
     fi
     return 0
 }
-# ensure-path (§5.7): one marker-delimited block in the user's rc file,
-# chosen by interactive shell — zsh → ~/.zprofile on BOTH OSes; else Darwin →
-# ~/.zprofile, Linux → ~/.profile. Append-only; foreign marker block = refuse.
+# ensure-path (§5.7): one marker block in the rc file chosen by shell/OS (zsh→zprofile
+# both OSes; else Darwin→zprofile, Linux→profile). Append-only; foreign block = refuse.
 cmd_ensure_path() {
     _dry=''
     case ${1:-} in
@@ -162,8 +171,7 @@ usage: qlaude setup [-y] [--endpoint U] [--model M] [--auth A] [--context N] \
                     [--effort E] [--claude-bin P] [--token-stdin]
 USAGE
 }
-# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status lines on
-# stderr; exit per table; NO set -e here (rule).
+# --- gauntlet (§5.5): ordered, stop at first hard fail (0-3); status on stderr; exit per table; NO set -e.
 gline() { printf '%s %s %s: %s\n' "$1" "$2" "$3" "$4" >&2; }
 step0_prereq() {
     case $(uname) in
@@ -183,8 +191,7 @@ step0_prereq() {
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
-# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows
-# the one printed 404 auto-fix.
+# step1_messages — README verify-curl over curl stdin config (C6); $1=1 allows the one 404 auto-fix.
 step1_messages() {
     if [ -z "${_G_TOK:-}" ]; then
         gline FAIL 1 messages "no token configured → run: qlaude setup"
@@ -230,8 +237,7 @@ EOF
 }
 # step2/step3: isolated HOME per spawn (C7): user ~/.claude.json excluded.
 step2_claude() {
-    # §5.5: on failure the probe's own text is surfaced VERBATIM (auth/login/
-    # env diagnosis is doctor's job, not the user's rerun chore).
+    # §5.5: on failure the probe's text surfaces VERBATIM (diagnosis is doctor's job, not a rerun chore).
     _o=$(_probe_claude "Reply with exactly: OK" 1)
     if printf '%s\n' "$_o" | grep -q OK; then
         gline PASS 2 claude "echoed OK"; return 0
@@ -321,8 +327,7 @@ EOF
 ) || return 1
     case $_pout in
         *200)
-            # tolerant of whitespace around ':'; ids are SERVER-CONTROLLED —
-            # filtered to printable ASCII before display (no escape injection).
+            # whitespace-tolerant; ids SERVER-CONTROLLED — printable-ASCII filter before display (a4 doctrine).
             printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
                 sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
@@ -358,7 +363,7 @@ cmd_setup() {
         while IFS= read -r _line || [ -n "$_line" ]; do
             case $_line in
                 QLAUDE_ENDPOINT=*)
-                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$_ep"; fi
+                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi
                     ;;
                 QLAUDE_MODEL=*)
                     if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
@@ -376,19 +381,16 @@ cmd_setup() {
     if ! command -v "$_cb" >/dev/null 2>&1; then
         err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
-    # endpoint first, so the token prompt can name what the token is FOR
-    # (owner UX feedback); token still precedes the probe, per §5.4.
+    # endpoint first so the token prompt names its target (owner UX); token still precedes probe (§5.4).
     if [ -z "$_ep" ]; then
         if [ ! -t 0 ] || [ -n "$_y" ]; then err "endpoint required (--endpoint or QLAUDE_ENDPOINT)"; usage_setup >&2; return 1; fi
         prompt "endpoint URL (the Anthropic-compatible server qlaude will route to): "
         IFS= read -r _ep || _ep=''
     fi
-    # token before any probe, never echoed (C9): stdin flag or hidden prompt.
-    # stdin flag on a TTY still hides (typed bytes echo!); plain read keeps a
-    # newline-less final line (vault/pipeline idiom — EOF is not discard).
-    if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then _hidden_read _tok; else IFS= read -r _tok; fi; fi
+    # token before probe, never echoed (C9). tty+stdin-flag hides (typed bytes echo!); plain read keeps newline-less final line (vault idiom — EOF ≠ discard).
+    if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then prompt "token via stdin (hidden; stored 0600, never printed): "; _hidden_read _tok; printf '\n' >&2; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
-        prompt "token for $_ep (input hidden; stored 0600 in config.env, never printed): "
+        prompt "token for $(_asc "$_ep") (input hidden; stored 0600 in config.env, never printed): "
         _hidden_read _tok || _tok=''
         printf '\n' >&2
     fi
@@ -430,8 +432,7 @@ cmd_setup() {
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
     fi
-    # C6 §5.4: on macOS the token goes to the Keychain, piped on STDIN (never
-    # argv — G4); a locked/odd keychain notes + degrades to the 0600 file.
+    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file.
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
@@ -531,8 +532,7 @@ cmd_launch() {
         unset CLAUDE_CODE_AUTO_MODE_SERVER
     fi
     if [ "${QLAUDE_DEBUG:-}" = env ]; then
-        # A4: this list is the assertion target; values come from the shell's
-        # own params — a printenv child would inherit the exported token.
+        # A4: assertion target; values from own params (a printenv child would inherit the token).
         case $QLAUDE_AUTH in bearer) err "export ANTHROPIC_AUTH_TOKEN=[redacted]" ;; api-key) err "export ANTHROPIC_API_KEY=[redacted]" ;; esac
         err "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL ANTHROPIC_MODEL=$ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL=$ANTHROPIC_DEFAULT_OPUS_MODEL"
         err "export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL=$ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_AUTO_MODE_MODEL=$CLAUDE_CODE_AUTO_MODE_MODEL"
@@ -592,8 +592,7 @@ main() {
             ;;
     esac
 }
-# Run only as a program; sourcing (tests) exposes functions without main.
-# Piped `sh -s` gives an empty/bare-shell $0 — those count as invocation.
+# Run only as a program; sourcing (tests) exposes functions. Piped `sh -s` (empty/bare $0) counts as invocation.
 case $0 in
     '' | */qlaude | qlaude | sh | -sh | dash | -dash | bash | -bash)
         main "$@"
