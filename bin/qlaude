@@ -273,14 +273,12 @@ _probe_claude() {
     _d=$(mktemp -d) || return 1
     (
         cd "$_d" || exit 1
-        unset CLAUDE_CODE_AUTO_MODE_SERVER
+        # audit a2: the FULL credential-shaped namespace, not just two vars —
+        # OAUTH_TOKEN/CUSTOM_HEADERS/stale pins must never reach the probe.
+        for _scrub in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_MODEL ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_AUTO_MODE_SERVER CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_MAX_CONTEXT_TOKENS; do unset "$_scrub"; done
         case $QLAUDE_AUTH in
-            api-key)
-                unset ANTHROPIC_AUTH_TOKEN
-                export ANTHROPIC_API_KEY="$_G_TOK" ;;
-            *)
-                unset ANTHROPIC_API_KEY
-                export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
+            api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
+            *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
         export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
             ANTHROPIC_MODEL="$QLAUDE_MODEL"
