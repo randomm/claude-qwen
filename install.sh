@@ -70,7 +70,9 @@ fetch() { # fetch <url> <out>
                     return "$EXIT_PREREQ"
                     ;;
                 127.0.0.1 | 127.0.0.1:* | localhost | localhost:*)
-                    curl -m 30 -fsSL -o "$_out" "$_url"
+                    # audit a11: a loopback peer (or port-race winner) must not be able to
+                    # redirect the test install elsewhere: no -L (302 fails -f), --proto pins http.
+                    curl -m 30 -fsS --proto '=http' -o "$_out" "$_url"
                     ;;
                 *)
                     err "refusing non-HTTPS source: $_url"
@@ -118,6 +120,9 @@ work=$(mktemp -d) || { err "mktemp -d failed (TMPDIR unusable?)"; exit "$EXIT_PR
 # shellcheck disable=SC2329
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
+# audit a12: dash need NOT run the EXIT trap on SIGINT/SIGTERM (POSIX allows
+# skipping) — Ctrl-C mid-fetch would leak the work dir (payload copies).
+trap 'cleanup; exit 130' INT TERM
 
 # --- fetch the payload trio into the work dir; nothing installed yet
 base="$QLAUDE_BASE_URL/$QLAUDE_REF"
