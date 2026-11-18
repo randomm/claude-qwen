@@ -293,7 +293,7 @@ printf 'http://127.0.0.1:%s\n%s\nstub-model\n\nxhigh\n' \
     "$QLAUDE_STUB_PORT" "$QLAUDE_CI_TOKEN" >"$tmp/feed_p"
 
 [ -n "${QLAUDE_STUB_PORT:-}" ] || { echo "installer test: harness must export QLAUDE_STUB_PORT" >&2; exit 2; }
-_pty_feed "$tmp/feed_p" env -u QLAUDE_NO_SETUP
+_pty_feed "$tmp/feed_p" env -u QLAUDE_NO_SETUP -u CI
 if tr -d '\r' <"$tmp/pty_p.out" | grep -q 'endpoint URL'; then st=0; else st=1; printf '%s\n' "$(tail -5 "$tmp/pty_p.out")" >&2; fi
 t "#82 (tty): installer runs the guided interview itself" 0 $st
 if [ -f "$tmp/conf-p/config.env" ] \
@@ -302,7 +302,7 @@ if [ -f "$tmp/conf-p/config.env" ] \
 t "#82 single paste: the fed interview saved a real config.env" 0 $st
 
 # anti-vacuous 1: the documented script escape must keep the installer silent.
-_pty_feed "$tmp/feed_p" env QLAUDE_NO_SETUP=1
+_pty_feed "$tmp/feed_p" env -u CI QLAUDE_NO_SETUP=1
 if tr -d '\r' <"$tmp/pty_p.out" | grep -q 'endpoint URL'; then st=1; else st=0; fi
 t "#82 QLAUDE_NO_SETUP=1: no wizard under a tty (printed next-line only)" 0 $st
 
