@@ -240,6 +240,16 @@ except ChildProcessError:
     t "  early-injected token still captured to config (read not lost)" 0 $st
 fi
 
+D
+# audit 2026-11-18: 401 from the model probe must name the TOKEN, not reachability.
+mkdir -p "$tmp/pconf8"
+printf 'appended prompt body\n' >"$tmp/pconf8/SYSTEM-PROMPT.md"
+out=$(printf 'wrong-token-42\n' | _run "$tmp/pconf8" -y --endpoint "$base" \
+    --model stub-model --token-stdin --claude-bin "$tmp/bin/claude" 2>&1)
+if printf '%s\n' "$out" | grep -q 'rejected the token'; then st=0; else st=1; fi
+t "probe 401: note names the token, not reachability" 0 $st
+if printf '%s\n' "$out" | grep -q 'unreachable'; then st=1; else st=0; fi
+t "  probe 401: no false 'unreachable' claim" 0 $st
 # Audit polish (2026-11-18): an empty/whitespace-only endpoint was accepted,
 # saved as QLAUDE_ENDPOINT= and reported "saved" — every launch then said
 # "run: qlaude setup", the wizard just completed. Must exit 1 writing nothing
@@ -264,5 +274,6 @@ printf '%s\n' "$QLAUDE_CI_TOKEN" | _run "$tmp/pconf6" -y --endpoint "   " \
 rc=$?
 if [ "$rc" -eq 1 ] && [ ! -f "$tmp/pconf6/config.env" ]; then st=0; else st=1; fi
 t "whitespace-only --endpoint: exit 1, no config written" 0 $st
+n
 
 exit "$fail"

@@ -215,7 +215,7 @@ EOF
             return "$EXIT_AUTH" ;;
         404)
             if [ "${1:-}" = 1 ]; then
-                gline FAIL 1 messages "404 at $(_asc "$QLAUDE_ENDPOINT")/v1/messages → likely a /v1 path issue (README Setup)"
+                gline FAIL 1 messages "404 at $(_asc "$QLAUDE_ENDPOINT")/v1/messages → /v1 path issue OR unknown model id — compare 'qlaude config' model= with your server (README Setup + failure-mode row)"
                 return "$EXIT_AUTH"
             fi
             case $QLAUDE_ENDPOINT in
@@ -228,8 +228,9 @@ EOF
         401 | 403)
             gline FAIL 1 messages "auth rejected ($_c) → wrong token or auth style: re-run qlaude setup (bearer only); an x-api-key server needs the README manual env block"
             return "$EXIT_AUTH" ;;
+        429) gline FAIL 1 messages "429 rate-limited → server is up but throttling you; retry later, or raise its concurrency/quota (README failure-mode row)"; return "$EXIT_AUTH" ;;
         *)
-            gline FAIL 1 messages "unexpected HTTP '$_c' → check the endpoint (README verify-curl row)"
+            gline FAIL 1 messages "unexpected HTTP '$_c' → server-side error; see the server log (README verify-curl row)"
             return "$EXIT_AUTH" ;;
     esac
 }
@@ -320,6 +321,7 @@ EOF
             printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
                 sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
+        *401 | *403) return 2 ;;
         *) return 1 ;;
     esac
 }
@@ -403,12 +405,9 @@ cmd_setup() {
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
     _has_bad_char "$_ep" && { err "endpoint must not contain quote or line break (config corruption?) — re-enter the URL"; return 1; }
-    _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
-    if [ -n "$_ids" ]; then
-        err "discovered models from $_epd/v1/models: $_ids"
-    else
-        err "note: model probe unreachable at $_epd/v1/models — supply --model"
-    fi
+    _ids=$(probe_models "$_ep" "$_tok"); _prc=$?
+    [ "$_prc" -eq 0 ] || _ids=''
+    if [ -n "$_ids" ]; then err "discovered models from $_epd/v1/models: $_ids"; elif [ "$_prc" -eq 2 ]; then err "note: the server rejected the token (401/403) — double-check it; supply --model"; else err "note: model probe unreachable or listed no models at $_epd/v1/models — supply --model"; fi
     if [ -z "$_md" ]; then
         if [ ! -t 0 ] || [ -n "$_y" ]; then err "model required (--model or QLAUDE_MODEL)"; usage_setup >&2; return 1; fi
         prompt "model (id as the server knows it, e.g. from the discovered list): "
