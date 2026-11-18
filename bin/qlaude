@@ -111,6 +111,7 @@ config_parse() {
         err "QLAUDE_ENDPOINT missing — run: qlaude setup"
         return "$EXIT_USAGE"
     fi
+    while [ "$QLAUDE_ENDPOINT" != "${QLAUDE_ENDPOINT%/}" ]; do QLAUDE_ENDPOINT=${QLAUDE_ENDPOINT%/}; done
     case $QLAUDE_ENDPOINT in
         */v1)
             err "warning: stripped trailing /v1 from endpoint — Claude Code appends /v1/messages itself (see README Setup block)"
@@ -158,7 +159,7 @@ cmd_ensure_path() {
         err "could not write $_f — check its permissions"
         return "$EXIT_PREREQ"
     fi
-    err "PATH updated in $_f — open a new terminal to pick it up"
+    err "PATH updated in $_f — interactive bash reads ~/.bashrc, not this file; paste now: export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
 }
 usage_setup() { # wizard usage (§5.4)
     cat <<'USAGE'
@@ -182,7 +183,7 @@ step0_prereq() {
         return "$EXIT_PREREQ"
     fi
     [ -s "$QLAUDE_CONFDIR_RESOLVED/SYSTEM-PROMPT.md" ] || {
-        gline FAIL 0 prereqs "SYSTEM-PROMPT.md missing/empty → run: qlaude setup, or re-run the installer"
+        gline FAIL 0 prereqs "SYSTEM-PROMPT.md missing/empty → re-run the installer (README Quickstart one-liner); qlaude setup does not create this file"
         return "$EXIT_PREREQ"; }
     gline PASS 0 prereqs "all found"; return 0
 }
@@ -214,21 +215,22 @@ EOF
             return "$EXIT_AUTH" ;;
         404)
             if [ "${1:-}" = 1 ]; then
-                gline FAIL 1 messages "404 at $QLAUDE_ENDPOINT/v1/messages → likely a /v1 path issue (README Setup)"
+                gline FAIL 1 messages "404 at $(_asc "$QLAUDE_ENDPOINT")/v1/messages → /v1 path issue OR unknown model id — compare 'qlaude config' model= with your server (README Setup + failure-mode row)"
                 return "$EXIT_AUTH"
             fi
             case $QLAUDE_ENDPOINT in
                 */v1) _fx=${QLAUDE_ENDPOINT%/v1} ;;
                 *) _fx="$QLAUDE_ENDPOINT/v1" ;;
             esac
-            err "note: 404 — retrying once with a corrected /v1 path: $_fx (printed auto-fix, spec §5.5)"
+            err "note: 404 — retrying once with a corrected /v1 path: $(_asc "$_fx") (printed auto-fix, spec §5.5)"
             QLAUDE_ENDPOINT=$_fx step1_messages 1
             return $? ;;
         401 | 403)
             gline FAIL 1 messages "auth rejected ($_c) → wrong token or auth style: re-run qlaude setup (bearer only); an x-api-key server needs the README manual env block"
             return "$EXIT_AUTH" ;;
+        429) gline FAIL 1 messages "429 rate-limited → server is up but throttling you; retry later, or raise its concurrency/quota (README failure-mode row)"; return "$EXIT_AUTH" ;;
         *)
-            gline FAIL 1 messages "unexpected HTTP '$_c' → check the endpoint (README verify-curl row)"
+            gline FAIL 1 messages "unexpected HTTP '$_c' → server-side error; see the server log (README verify-curl row)"
             return "$EXIT_AUTH" ;;
     esac
 }
@@ -279,10 +281,9 @@ _probe_claude() {
             api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
             *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
-        # effort mirrors launch (§5.3): unset here meant CC's default 'high' hit low|medium|xhigh servers → false FAIL 2 (dogfood 2026-11-17).
-        case $QLAUDE_EFFORT in high) QLAUDE_EFFORT=xhigh ;; esac  # audit: hand-edited 'high' maps here too
-        export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
-            ANTHROPIC_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
+        # probe mirrors the FULL launch contract (§5.3/§5.5): effort (dogfood 2026-11-17) AND every alias/classifier/context — unset aliases 400s/404'd background traffic (audit 2026-11-18).
+        case $QLAUDE_EFFORT in high) QLAUDE_EFFORT=xhigh ;; esac; export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" ANTHROPIC_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT" ANTHROPIC_DEFAULT_OPUS_MODEL="$QLAUDE_MODEL" ANTHROPIC_DEFAULT_SONNET_MODEL="$QLAUDE_MODEL" ANTHROPIC_DEFAULT_HAIKU_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_AUTO_MODE_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_BG_CLASSIFIER_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_MAX_CONTEXT_TOKENS="$QLAUDE_CONTEXT_TOKENS"  # audit: hand-edited high maps here too
+        case ${QLAUDE_AUTO_MODE_SERVER:-off} in on) : ;; *) export CLAUDE_CODE_AUTO_MODE_SERVER=0 ;; esac
         if [ -n "${3:-}" ]; then
             exec "$_G_BIN" -p "$1" --model "$QLAUDE_MODEL" \
                 --max-turns "$2" --allowedTools "$3"
@@ -320,6 +321,7 @@ EOF
             printf '%s\n' "${_pout%200}" | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | \
                 sed 's/.*"\([^"]*\)"$/\1/' | tr '\n' ' ' | LC_ALL=C tr -cd '\040-\176'
             ;;
+        *401 | *403) return 2 ;;
         *) return 1 ;;
     esac
 }
@@ -357,23 +359,24 @@ cmd_setup() {
         while IFS= read -r _line || [ -n "$_line" ]; do
             case $_line in
                 QLAUDE_ENDPOINT=*)
-                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi
+                    # audit: corrupt data is DROPPED at ingest, not kept for a late post-interview abort.
+                    if [ -z "$_ep" ]; then if _has_bad_char "${_line#*=}"; then err "preview: corrupt QLAUDE_ENDPOINT ignored — re-enter it"; else _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi; fi
                     ;;
                 QLAUDE_MODEL=*)
-                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
+                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$(_asc "$_md")"; fi
                     ;;
-                QLAUDE_AUTH=*) [ -z "$_au" ] && _au=${_line#*=} ;;
-                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
-                QLAUDE_EFFORT=*) [ -z "$_ef" ] && _ef=${_line#*=} ;;
+                QLAUDE_AUTH=*) [ -z "$_au" ] && { case ${_line#*=} in bearer|api-key) _au=${_line#*=} ;; *) err "preview: invalid QLAUDE_AUTH ignored — re-enter it (or leave bearer)" ;; esac; } ;;
+                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && { case ${_line#*=} in ''|*[!0-9]*) err "preview: invalid QLAUDE_CONTEXT_TOKENS ignored — re-enter digits" ;; *) _ct=${_line#*=} ;; esac; } ;;
+                QLAUDE_EFFORT=*) [ -z "$_ef" ] && { case ${_line#*=} in low|medium|high|xhigh) _ef=${_line#*=} ;; *) err "preview: invalid QLAUDE_EFFORT ignored — re-enter low/medium/xhigh" ;; esac; } ;;
                 QLAUDE_CLAUDE_BIN=*) [ -z "$_cb" ] && _cb=${_line#*=} ;;
-                QLAUDE_TOKEN=*) [ -z "$_tok" ] && _tok=${_line#*=} ;;
+                QLAUDE_TOKEN=*) if [ -z "$_tok" ]; then _tok=${_line#*=}; [ -n "${_tok_stdin:-}" ] || err "preview: keeping stored token — to replace it: qlaude setup --token-stdin"; fi ;;
             esac
         done <"$_cf"
     fi
     # claude present? detect-then-offer, never silent, never silent-install.
     _cb=${_cb:-claude}
     if ! command -v "$_cb" >/dev/null 2>&1; then
-        err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
+        err "claude bin '$(_asc "$_cb")' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
     # endpoint first so the token prompt names its target (owner UX); token still precedes probe (§5.4).
     if [ -z "$_ep" ]; then
@@ -382,10 +385,10 @@ cmd_setup() {
         IFS= read -r _ep || _ep=''
         [ -n "$_echo_off" ] && [ -n "$_ep" ] && err "endpoint (read back): $(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')"
     fi
-    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path (/v1/v1/models
-    # → false 'unreachable', raw value saved). Normalize like parse does, BEFORE probe.
+    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path → false 'unreachable', raw value saved. Normalize like parse does, BEFORE probe.
     _ep=${_ep%/}
     case $_ep in */v1) _ep=${_ep%/v1} ;; esac
+    [ -n "$(printf '%s' "$_ep" | tr -d '[:space:]')" ] || { err "endpoint required — empty endpoint would break every launch"; usage_setup >&2; return 1; }
     # token before probe, never echoed (C9). tty+stdin-flag still hides; plain read keeps newline-less final line.
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then prompt "token via stdin (hidden; stored 0600, never printed): "; _hidden_read _tok; printf '\n' >&2; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
@@ -401,12 +404,10 @@ cmd_setup() {
     [ -n "$_echo_off" ] && { stty echo 2>/dev/null; trap - EXIT INT TERM; _echo_off=''; }
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
-    _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
-    if [ -n "$_ids" ]; then
-        err "discovered models from $_epd/v1/models: $_ids"
-    else
-        err "note: model probe unreachable at $_epd/v1/models — supply --model"
-    fi
+    _has_bad_char "$_ep" && { err "endpoint must not contain quote or line break (config corruption?) — re-enter the URL"; return 1; }
+    _ids=$(probe_models "$_ep" "$_tok"); _prc=$?
+    [ "$_prc" -eq 0 ] || _ids=''
+    if [ -n "$_ids" ]; then err "discovered models from $_epd/v1/models: $_ids"; elif [ "$_prc" -eq 2 ]; then err "note: the server rejected the token (401/403) — double-check it; supply --model"; else err "note: model probe unreachable or listed no models at $_epd/v1/models — supply --model"; fi
     if [ -z "$_md" ]; then
         if [ ! -t 0 ] || [ -n "$_y" ]; then err "model required (--model or QLAUDE_MODEL)"; usage_setup >&2; return 1; fi
         prompt "model (id as the server knows it, e.g. from the discovered list): "
@@ -434,8 +435,7 @@ cmd_setup() {
     if ! mkdir -p "$QLAUDE_CONFDIR_RESOLVED"; then
         err "cannot create $QLAUDE_CONFDIR_RESOLVED"
         return "$EXIT_PREREQ"
-    fi
-    # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file with a note.
+    fi  # C6 §5.4: macOS token → Keychain via STDIN (never argv, G4); locked/odd keychain degrades to the 0600 file with a note.
     _kc=0
     if [ "$(uname)" = Darwin ] && command -v security >/dev/null 2>&1; then
         _u=${USER:-$(id -un 2>/dev/null)}
@@ -548,7 +548,7 @@ cmd_launch() {
     if [ -s "$_sp" ]; then
         exec "$_abs" --append-system-prompt-file "$_sp" "$@"
     fi
-    err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (run: qlaude setup)"
+    err "note: no SYSTEM-PROMPT.md at $_sp — launching without the append (re-run the installer; setup does not create this file)"
     exec "$_abs" "$@"
 }
 # qlaude config — resolved state + shadowed report (§5.3); never the token (A4).
