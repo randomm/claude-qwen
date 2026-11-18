@@ -214,14 +214,14 @@ EOF
             return "$EXIT_AUTH" ;;
         404)
             if [ "${1:-}" = 1 ]; then
-                gline FAIL 1 messages "404 at $QLAUDE_ENDPOINT/v1/messages → likely a /v1 path issue (README Setup)"
+                gline FAIL 1 messages "404 at $(_asc "$QLAUDE_ENDPOINT")/v1/messages → likely a /v1 path issue (README Setup)"
                 return "$EXIT_AUTH"
             fi
             case $QLAUDE_ENDPOINT in
                 */v1) _fx=${QLAUDE_ENDPOINT%/v1} ;;
                 *) _fx="$QLAUDE_ENDPOINT/v1" ;;
             esac
-            err "note: 404 — retrying once with a corrected /v1 path: $_fx (printed auto-fix, spec §5.5)"
+            err "note: 404 — retrying once with a corrected /v1 path: $(_asc "$_fx") (printed auto-fix, spec §5.5)"
             QLAUDE_ENDPOINT=$_fx step1_messages 1
             return $? ;;
         401 | 403)
@@ -279,8 +279,7 @@ _probe_claude() {
             api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
             *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
-        # effort mirrors launch (§5.3): unset here meant Claude Code's default 'high'
-        # hit low|medium|xhigh servers → 400 → false FAIL 2 (dogfood 2026-11-17).
+        # effort mirrors launch (§5.3): unset here let CC's default 'high' hit low|medium|xhigh servers → 400 → false FAIL 2 (dogfood 2026-11-17).
         export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
             ANTHROPIC_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
         if [ -n "${3:-}" ]; then
@@ -360,7 +359,7 @@ cmd_setup() {
                     if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi
                     ;;
                 QLAUDE_MODEL=*)
-                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
+                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$(_asc "$_md")"; fi
                     ;;
                 QLAUDE_AUTH=*) [ -z "$_au" ] && _au=${_line#*=} ;;
                 QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
@@ -373,7 +372,7 @@ cmd_setup() {
     # claude present? detect-then-offer, never silent, never silent-install.
     _cb=${_cb:-claude}
     if ! command -v "$_cb" >/dev/null 2>&1; then
-        err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
+        err "claude bin '$(_asc "$_cb")' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
     # endpoint first so the token prompt names its target (owner UX); token still precedes probe (§5.4).
     if [ -z "$_ep" ]; then
