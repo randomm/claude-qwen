@@ -1,52 +1,100 @@
-# claude-qwen
+# claude-qwen — Claude Code against your own model server
 
+[![CI](https://github.com/randomm/claude-qwen/actions/workflows/ci.yml/badge.svg)](https://github.com/randomm/claude-qwen/actions/workflows/ci.yml)
 [![Apache-2.0 licensed](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Connect [Claude Code](https://code.claude.com) — Anthropic's terminal coding
-agent, a CLI that reads your code, edits files and runs commands — to your own
-model server, so you do not need an Anthropic subscription.
+Run [Claude Code](https://code.claude.com) — Anthropic's terminal coding
+agent, a CLI that reads your code, edits files and runs commands — against
+your own model server. One paste, five setup questions, then `qlaude` just
+works: no Anthropic subscription or account, and no environment variables to
+set yourself (an environment variable is a setting a program reads from its
+shell instead of a file — the launcher sets every one of them for you).
+
+**Linux and macOS. There is no Windows support.**
+
+Verified November 2026 on Linux and macOS (one gateway, one model):
+Claude Code 2.1.325 + vLLM 0.33, Anthropic route with bearer auth,
+interactive and `-p` modes, tool use included — full evidence in
+[Status](#status).
 
 The target server is [vLLM](https://docs.vllm.ai), the open-source LLM
 inference server. Since vLLM v0.11.1 it answers Anthropic's Messages API
 (`POST /v1/messages`) itself, so Claude Code connects **directly — no
 translation server between them**. This is vLLM's
 [official Claude Code integration](https://docs.vllm.ai/en/stable/serving/integrations/claude_code/).
-
-This README is endpoint-agnostic: `<your-endpoint>`, `<your-model-name>` and
-`<your-token>` are placeholders — replace them with your server URL, your
-`--served-model-name`, and your server's access token.
+Anything that speaks the same route works: `<your-endpoint>`,
+`<your-model-name>` and `<your-token>` below are placeholders — replace them
+with your server URL, your `--served-model-name`, and your server's access
+token.
 
 ## Quickstart (qlaude)
 
+You need three things: a model server **already running**, its URL, and its
+access token. This repo does not run a server for you — if you don't have
+one yet, read [Prerequisites](#prerequisites) first.
+
 `qlaude` is the launcher this repo ships: a single POSIX-sh script that
-stores your endpoint/model/token in `~/.config/qlaude/config.env` (mode
-0600; on macOS an *unattended* no-terminal setup additionally stores the
-token in the keychain — interactive setup keeps it in the file and says so,
-because Apple's `security` tool blind-prompts the terminal for the secret), runs the checks
-below as `qlaude doctor`, and launches Claude Code with every export from
-the [Setup](#setup) block set for you. The manual path — the Setup block
-itself — still works and is documented below; `qlaude` is not required.
+stores your endpoint/model/token in `~/.config/qlaude/config.env` (mode 0600
+— readable only by your user), runs the self-checks below as `qlaude doctor`,
+and launches Claude Code with every export from the [Setup](#setup) block set
+for you. The manual path — the Setup block itself — still works and is
+documented below; `qlaude` is not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
 ```
 
-That one paste installs and, in a terminal, configures: the installer
-verifies checksums, then runs the guided interview — endpoint (no trailing
-`/v1` needed; it normalizes), token (hidden input, stored `0600`), model,
-context, reasoning effort — and finishes with the five checks
-(`prereqs, /v1/messages, claude, tools, info`) that `qlaude doctor` repeats
-any time. Then plain `qlaude` opens your session — after a completed
-interview it launches directly.
+That paste installs `~/.local/bin/qlaude` plus
+`~/.config/qlaude/SYSTEM-PROMPT.md` (mode `0600`, the optional behavior
+prompt — see [Status](#status)) — nothing else: no daemon, no shell-rc
+edits unless you later run the consent command it prints. In a terminal it
+prints the PATH line to copy (only if needed), then runs the setup
+interview: endpoint (no trailing `/v1` needed; it normalizes), token
+(shown as `*`, stored `0600`), model (picked from what the server
+advertises — Enter accepts a single discovered id), context (how many
+tokens the model can see at once), reasoning effort (how hard the model
+thinks before answering). It ends with the five checks below. Success
+looks like this (output sketch — your server URL and model names will
+differ):
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+qlaude install: fetching from https://raw.githubusercontent.com/randomm/claude-qwen/main
+qlaude install: checksums verified (truncation/corruption guard; supply chain = TLS + the host)
+qlaude install: installed ~/.local/bin/qlaude
+qlaude install: PATH note: ~/.local/bin is not on PATH — copy-paste now: export PATH="$HOME/.local/bin:$PATH" (then: ~/.local/bin/qlaude ensure-path)
+qlaude install: next: guided configuration — answer the prompts (Ctrl-C skips; resume any time: ~/.local/bin/qlaude setup)
+qlaude: endpoint URL (the Anthropic-compatible server qlaude will route to — type or paste, it echoes back): https://models.example.com
+qlaude: token for https://models.example.com — paste it (shown as *, stored 0600 in config.env, never printed), Enter when done: **********
+qlaude: model — 1 discovered; Enter accepts my-model (or type another id):
+qlaude: context window tokens (= your server's --max-model-len; Enter = 262144):
+qlaude: reasoning effort low/medium/xhigh ('high' is mapped for you; Enter = medium):
+PASS 0 prereqs: all found
+PASS 1 messages: 200 with content text
+PASS 2 claude: echoed OK
+PASS 3 tools: tool call round-tripped
+PASS 4 info: no informational issues
+```
+
+Then plain `qlaude` opens Claude Code against your endpoint — just type what
+you want done. To check what the launcher itself wired — the `qlaude`
+equivalent of [Verify](#verify-in-this-order) step 2 — everything after `--`
+passes straight to Claude Code:
+
+```bash
+qlaude -- -p "Reply with exactly: OK" --max-turns 1
+```
 
 - The installer prints your exact PATH line for the current shell, and the
   absolute-path command to make it permanent: `qlaude ensure-path`
   (consent-based — rc files are touched by that command only).
 - Skipped or Ctrl-C'd the interview? Rerun the absolute path the installer
   printed (default `~/.local/bin/qlaude setup`).
-- In scripts and CI (`CI` set, or non-tty stdin) the installer only
-  installs; configure explicitly instead — the wizard accepts every answer
-  as a flag and the token only via stdin, never argv:
+- In scripts and CI — when the installer's **output** is not a terminal,
+  or `CI` is set — the installer only installs; configure explicitly
+  instead — the wizard accepts every answer
+  as a flag and the token only via stdin, never argv (in CI, feed the token
+  from your secret store or a file mount, not shell history):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
@@ -56,25 +104,19 @@ printf '%s' "$YOUR_TOKEN" | ~/.local/bin/qlaude setup -y --token-stdin \
 
   (Replace the token, path, endpoint and model; `QLAUDE_NO_SETUP=1` keeps
   the wizard from starting even in an interactive terminal.)
-- To check what the launcher itself wired — the `qlaude` equivalent of
-  Verify step 2 — everything after `--` passes straight to Claude Code:
-
-```bash
-qlaude -- -p "Reply with exactly: OK" --max-turns 1
-```
-
+- The five checks above (`prereqs`, `messages`, `claude`, `tools`,
+  `info`) are what `qlaude doctor` repeats any time; it mirrors
+  [Verify, in this order](#verify-in-this-order) plus a real tool-use probe,
+  and is what `qlaude setup` runs at the end. `qlaude` obeys the same
+  prerequisites and the same server-side [checklist](#server-side-checklist-vllm)
+  as the manual path.
 - The installer verifies a sha256 checksum of every file it fetches
   against `install.sha256` before executing anything — drift and
   corruption protection. It is not first-run authentication: the
   manifest arrives over the same HTTPS channel as the payloads (spec
   §5.6, honest scope).
 - The token is never echoed, never printed, never passed in command-line
-  arguments; `qlaude config` and `qlaude doctor` show state, not the
-  value.
-- `qlaude doctor` mirrors [Verify, in this order](#verify-in-this-order)
-  plus a real tool-use probe, and is what `qlaude setup` runs at the end.
-- `qlaude` obeys the same prerequisites and the same server-side
-  [checklist](#server-side-checklist-vllm) as the manual path.
+  arguments; `qlaude config` and `qlaude doctor` show state, not the value.
 - Design and rationale: [docs/superpowers/specs/2026-11-16-qlaude-design.md](docs/superpowers/specs/2026-11-16-qlaude-design.md).
 
 ### Uninstall
@@ -94,13 +136,26 @@ those files from wherever they went instead. If you ran
 marker block from the file it named (`~/.profile` by default,
 `~/.zprofile` for zsh and macOS).
 
+## If something fails
+
+Run `qlaude doctor` first — it repeats the five checks and names the failing
+one. Then match the symptom:
+
+| Symptom | Real cause | Fix |
+|---|---|---|
+| "issue with the selected model … may not exist" | almost always a 404: wrong path (`/v1` suffix), wrong served name, or auth | check base URL against the Setup block, then curl `/v1/messages` |
+| `Invalid Authorization header value` | corrupted token or quotes introduced by copy-pasting between chat and shell | re-export with plain ASCII quotes; verify with `cat -A` |
+| Long sessions die with "context length exceeded" | Claude Code assumed a 1M window; the server's is smaller | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (≤ `--max-model-len`) |
+| `Unexpected reasoning effort ... Supported types are ...` | effort value the server does not accept | `CLAUDE_CODE_EFFORT_LEVEL` to one of the values the error lists |
+| Model "writes" files but nothing changes | server has no tool-call parser, so tool calls arrived as text | `--tool-call-parser` at vLLM start |
+| "this session isn't eligible … not compatible with this update" | server-side auto-mode checks were requested but the endpoint can't answer them — a billing disclosure, not an error; the qlaude launcher normally prevents it entirely | launch through `qlaude` (it exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`), or unset `QLAUDE_AUTO_MODE_SERVER=on` if your gateway cannot do the pass-through (see [Auto mode](docs/auto-mode.md)) |
+| ECONNREFUSED through a corporate or container proxy | Claude Code is a Node.js app: it ignores `*_proxy` variables unless `NODE_USE_ENV_PROXY=1`, and proxies can break its streaming responses | if the server is directly reachable, run `claude` with proxy variables unset; if you must traverse a proxy, set `NODE_USE_ENV_PROXY=1` plus `HTTPS_PROXY`, then test streaming with `claude -p` before trusting it |
+
 ## Prerequisites
 
 Works on Linux and macOS — everything here is POSIX `sh` plus `curl` and
-`npm`; the CI suite runs under `sh`, `dash` and `bash`, and the token ladder
-prefers the macOS keychain entry when one exists (headless setup writes it
-with the token on stdin only — never in a command line — and trusts it only
-after a read-back match).
+`npm`; CI parses every script with `dash -n` and runs the full offline
+suite under `sh` and `dash`.
 
 1. Node.js v18+ (ships `npm`), then Claude Code:
    `npm install -g @anthropic-ai/claude-code`. Check `claude --version`
@@ -108,11 +163,20 @@ after a read-back match).
 2. vLLM ≥ 0.11.1 serving one model — 0.11.1 introduced the Anthropic route,
    and this guide was verified on vLLM 0.33, a much newer release. Install
    the latest; releases between the two have the route but are untested here.
-   Any open model works; examples here use a Qwen model. Start it with the
+   Models your vLLM serves with a matching `--tool-call-parser` can
+   work; this guide was verified with one Qwen model. Start it with the
    server flags from the [checklist](#server-side-checklist-vllm).
 3. An access token for the server: if vLLM was started with `--api-key`
    (the flag is repeatable), the token must be one of the values passed to
    it; if auth is not enforced, no particular value is checked.
+
+Where the token lives: the launcher reads it from the macOS keychain entry
+first when one exists, else from `~/.config/qlaude/config.env` (mode 0600).
+You never set either by hand — `qlaude setup` writes them. (macOS detail:
+an *unattended* no-terminal setup writes the keychain entry with the token
+on stdin only — never in a command line — and trusts it only after a
+read-back match; interactive setup keeps it in the file and says so, because
+Apple's `security` tool blind-prompts the terminal for the secret.)
 
 ## How it works
 
@@ -174,7 +238,7 @@ setup was broken, so old errors keep appearing.
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | Claude Code routes some traffic (background tasks like session titles, plus `/model` picks) to roles named after Anthropic's model family — Opus, Sonnet and Haiku are Anthropic model names. Pin all three to your model, or those calls ask for a `claude-haiku-*` model your server does not have | background calls fail |
 | `CLAUDE_CODE_EFFORT_LEVEL` | Reasoning effort. Claude Code's own levels are `low/medium/high/xhigh`, but vLLM validates the field against its own list — `low`, `medium`, `xhigh` — so `high` is rejected: a name mismatch between the two products, not a typo on your side | a rejected value fails the request with HTTP 400 listing vLLM's accepted values |
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Declares the real context window for model ids Claude Code does not recognize | compaction triggers at the assumed 1M; requests fail with HTTP 400 past the server's real limit. Never set it above `--max-model-len` |
-| `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model name on your endpoint and falls back; your server may not have it. See [Auto mode](#auto-mode-and-the-safety-classifier) |
+| `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model name on your endpoint and falls back; your server may not have it. See [Auto mode](docs/auto-mode.md) |
 | `QLAUDE_AUTO_MODE_SERVER` (config.env / env) | `on` keeps Anthropic's server-side auto-mode checks switched on. The qlaude launcher otherwise exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`: an OpenAI-compatible server can never return `safeguard_results`, so asking for server checks only produces the billing notice | leave unset on self-hosted servers; set `on` only behind a gateway implementing the [pass-through contract](https://code.claude.com/docs/en/auto-mode-classifier-billing) |
 | `QLAUDE_AUTH` (config.env) | Auth header style: `bearer` (default) sends `Authorization: Bearer` via `ANTHROPIC_AUTH_TOKEN`; `api-key` sends `x-api-key` via `ANTHROPIC_API_KEY` instead, for gateways that only accept that header | an unrecognized value fails the launch with "config corrupted — run: qlaude setup" (setup also rejects it at entry) |
 | `QLAUDE_CLAUDE_BIN` (config.env / env) | Path to the `claude` binary the launcher execs — for non-PATH installs | a relative value containing a slash is absolutized against the current directory before exec (a CWD-dependent exec would be a hijack vector); a missing target fails launch with a plain "install Claude Code, or set QLAUDE_CLAUDE_BIN" message |
@@ -187,7 +251,7 @@ setup was broken, so old errors keep appearing.
 | Variable | Default | What it does |
 |---|---|---|
 | `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/randomm/claude-qwen` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
-| `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a release with `QLAUDE_REF=v0.1.0` (the CI pins it to the PR commit) |
+| `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a known-good version with `QLAUDE_REF=<40-char-commit-sha>` (no releases are tagged yet; CI pins it to the PR commit) |
 | `QLAUDE_INSTALL_DIR` | `~/.local/bin` | Where `qlaude` lands. Must be an absolute path (a relative entry in PATH resolves against every future shell's cwd) |
 | `QLAUDE_CONFIG_DIR` | `~/.config/qlaude` | Where `config.env` (mode 0600) and `SYSTEM-PROMPT.md` live |
 | `QLAUDE_NO_SETUP` | unset | Any value keeps the installer from running the guided interview even on a terminal (a set `CI` variable does the same); it prints the resume command instead |
@@ -242,173 +306,43 @@ curly quotes from chat-pasting, hidden characters, or a mangled token.
   makes that list optional and Claude Code works without it. Do not add a shim
   (a small server that fakes the expected answer) for `/v1/models`.
 
-## Failure-mode cheat sheet
+## Go deeper
 
-| Symptom | Real cause | Fix |
-|---|---|---|
-| "issue with the selected model … may not exist" | almost always a 404: wrong path (`/v1` suffix), wrong served name, or auth | check base URL against the Setup block, then curl `/v1/messages` |
-| `Invalid Authorization header value` | corrupted token or quotes introduced by copy-pasting between chat and shell | re-export with plain ASCII quotes; verify with `cat -A` |
-| Long sessions die with "context length exceeded" | Claude Code assumed a 1M window; the server's is smaller | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (≤ `--max-model-len`) |
-| `Unexpected reasoning effort ... Supported types are ...` | effort value the server does not accept | `CLAUDE_CODE_EFFORT_LEVEL` to one of the values the error lists |
-| Model "writes" files but nothing changes | server has no tool-call parser, so tool calls arrived as text | `--tool-call-parser` at vLLM start |
-| "this session isn't eligible … not compatible with this update" | server-side auto-mode checks were requested but the endpoint can't answer them — a billing disclosure, not an error; the qlaude launcher normally prevents it entirely | launch through `qlaude` (it exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`), or unset `QLAUDE_AUTO_MODE_SERVER=on` if your gateway cannot do the pass-through (see [Auto mode](#auto-mode-and-the-safety-classifier)) |
-| ECONNREFUSED through a corporate or container proxy | Claude Code is a Node.js app: it ignores `*_proxy` variables unless `NODE_USE_ENV_PROXY=1`, and proxies can break its streaming responses | if the server is directly reachable, run `claude` with proxy variables unset; if you must traverse a proxy, set `NODE_USE_ENV_PROXY=1` plus `HTTPS_PROXY`, then test streaming with `claude -p` before trusting it |
-
-## Auto mode and the safety classifier
-
-Auto mode runs a safety classifier over actions (shell commands, network
-calls) before they execute. Anthropic can also run those checks server-side
-at no charge — but only where the checks can actually reach the session.
-Per
-[the official billing doc](https://code.claude.com/docs/en/auto-mode-classifier-billing),
-a gateway keeps them alive by forwarding the `anthropic-beta` header and the
-`safeguards` request-body field **unchanged, as a pair** (on the Bedrock
-InvokeModel format, the `anthropic_beta` body field instead), and by
-returning responses and streaming events without dropping fields, rewriting
-tool-use ids, or omitting `safeguard_results`.
-
-An OpenAI-compatible server cannot answer `safeguard_results` at all, so
-server-side checks are structurally unreachable for qlaude setups. The
-documented remedy for exactly that case is to stop asking for them — and the
-qlaude launcher does it for you:
-
-```bash
-# exported by qlaude launch — you do not set this yourself
-export CLAUDE_CODE_AUTO_MODE_SERVER=0
-```
-
-With it the "this session isn't eligible" notice never appears, and the
-classifier runs as Claude Code's own model calls through your base URL —
-**your server makes the decisions**, billed as ordinary tokens on your box.
-Verified November 2026 against the CI-pinned CLI: with server checks switched
-on the notice *does* appear on `-p` stderr even against a local stub, and the
-qlaude default export suppresses it (CI-enforced differential).
-That is why the two classifier pins matter (both are already in the
-[Setup](#setup) block):
-
-```bash
-export CLAUDE_CODE_AUTO_MODE_MODEL="<your-model-name>"      # auto-mode decisions
-export CLAUDE_CODE_BG_CLASSIFIER_MODEL="<your-model-name>"  # background tasks
-```
-
-Verified November 2026: with these set, auto mode enabled and actions
-auto-approved, the classifier is served by your custom model; it resolves
-through the same model config as the main loop.
-
-Behind a gateway that does implement the pass-through contract above, opt
-back in so the free server-side checks can reach your session:
-
-```bash
-export QLAUDE_AUTO_MODE_SERVER=on    # env or config.env; anything else = off (default)
-```
-
-Manual-env users (bypassing the launcher): set
-`CLAUDE_CODE_AUTO_MODE_SERVER=0` yourself.
-`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` also turns the server checks off
-while `CLAUDE_CODE_AUTO_MODE_SERVER` is unset, but it disables other beta
-features too — prefer the explicit `0`.
-
-Where the notice cannot wait for an answer (`claude -p` prints it to stderr;
-stream-json emits a system warning), with qlaude's default it does not
-appear at all.
-
-Two caveats:
-
-- The judge and the actor are the same model. Treat auto mode on a
-  self-hosted model as convenience, not a security boundary — use plan /
-  accept-edits modes for work you'd want an independent judge on.
-- To confirm the classifier rides your endpoint: watch the server log for an
-  extra `POST /v1/messages` while auto mode holds an action.
-
-## If you want a gateway anyway
-
-Direct connection is the default. Add a gateway only for multi-user keys,
-quotas, per-role model routing or cost accounting:
-
-| Option | Stars (Nov 2026) | Pick when |
-|---|---|---|
-| [LiteLLM Proxy](https://github.com/BerriAI/litellm) | ~63k | team quotas/keys/costs; a documented Claude Code path; answers `/v1/models` in Anthropic format and can forward `/v1/messages` unchanged |
-| [claude-code-router](https://github.com/musistudio/claude-code-router) | ~38k | route roles to different models (opus→big, haiku→small) without extra infrastructure |
-| [new-api](https://github.com/QuantumNous/new-api) | ~52k | you want a full account/console product (AGPL license) |
-| [CliRelay](https://github.com/kittors/CliRelay) | ~1k | single Go binary, small-team relay |
-
-Avoid `1rgs/claude-code-proxy` and `fuergaosi233/claude-code-proxy`: both are
-unmaintained (as of November 2026), and both exist to translate Anthropic
-traffic into OpenAI chat-completion calls — translation your vLLM already
-does internally. `1rgs/claude-code-proxy` additionally has no license, which
-rules it out for company use.
-
-## Behavior prompt (optional)
-
-The setup above works without this file. [`SYSTEM-PROMPT.md`](SYSTEM-PROMPT.md)
-adds a short set of rules that close gaps we could trace in public reports —
-behaviors Claude Code's **own** default prompt already asks for
-(report outcomes faithfully, act instead of narrating, prefer dedicated tools)
-but that open models demonstrably violate anyway. It only fills those gaps; it
-does not restate the defaults.
-
-Load it as an **append**, never a replacement — replacing the system prompt
-strips Claude Code's tool discipline and is the usual way people make things
-worse:
-
-```bash
-claude --append-system-prompt-file SYSTEM-PROMPT.md
-```
-
-For every session, wrap it in your shell config:
-
-```bash
-claude() { command claude --append-system-prompt-file ~/SYSTEM-PROMPT.md "$@"; }
-```
-
-### What each rule prevents
-
-| Rule in SYSTEM-PROMPT.md | Failure it prevents | Source |
-|---|---|---|
-| Act, never announce (no ending a turn on "Let me check X") | announce-then-stop: the model narrates a step and ends the turn without calling the tool; the loop treats it as done | [QwenLM/Qwen3.8#150](https://github.com/QwenLM/Qwen3.8/issues/150), [r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/1swdjkz/qwen_36_27b_in_claude_code_says_it_will_do) (snippet-level) |
-| Never emit an empty tool call to end a turn | same issue: empty tool calls leave tasks half-finished | [QwenLM/Qwen3.8#150](https://github.com/QwenLM/Qwen3.8/issues/150) |
-| Tools are a channel, not text | tool-call syntax leaking into prose instead of executing | [r/LocalLLM](https://www.reddit.com/r/LocalLLM/comments/1uiixjz/qwen25coder7b_emits_tool_calls_that_opencode) (snippet-level), [vllm#39056](https://github.com/vllm-project/vllm/issues/39056) |
-| Reply in the user's language, never mixed | language drift mid-session | [r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/1kad08f/qwen_3_wants_to_respond_in_chinese_even_when_not) (snippet-level), [qwen-code#6943](https://github.com/QwenLM/qwen-code/issues/6943) |
-| No preambles/apologies before actions; identity line | over-explaining before tool calls; claiming to be Claude because the default prompt says so | style reports in the threads above; identity: see mod below |
-
-Reddit threads are cited at search-snippet level (full threads were not
-fetchable from here); GitHub issues were read in full.
-
-### What deliberately is NOT in the file
-
-- **Tool-call format instructions.** The chat template + `--tool-call-parser`
-  decide the wire format; a prompt-level format rule can actively conflict
-  with the configured parser ([Qwen function-calling docs](https://qwen.readthedocs.io/en/latest/framework/function_call.html),
-  [vLLM qwen3_xml PR](https://github.com/vllm-project/vllm/pull/67164)).
-  Fix the parser, not the prompt.
-- **Thinking on/off.** Server/request parameters
-  (`--reasoning-parser qwen3`, `enable_thinking`), not prompt rules.
-- **Repetition loops.** Sampling config (`presence_penalty`) — and note
-  Qwen's own card warns raising it *causes* language mixing, so keep the
-  language rule above and leave sampling alone.
-- **Permission policy.** Harness config (permission modes, allowlists), not
-  model behavior.
-
-### Identity, all the way down (optional mod)
-
-Claude Code's default prompt tells the model it is Claude and lists Claude
-model versions. The append above overrules that, but if you want it removed
-rather than contradicted, [`ruihe774/cc-neutral-system-prompt`](https://github.com/ruihe774/cc-neutral-system-prompt)
-(Unlicense, last push Oct 2026, small personal project — evaluate before
-trusting) is a reference implementation that strips the Anthropic-specific
-sections and swaps in a provider-neutral identity line. Our single identity
-rule covers the observed symptom without a harness mod.
+- [Auto mode and the safety classifier](docs/auto-mode.md) — why the
+  launcher exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`, what the two classifier
+  pins do, the verified November 2026 differentials, and when to opt back in
+  behind a gateway that implements the pass-through contract.
+- [Gateways](docs/gateways.md) — direct connection is the default; which
+  proxies to add for multi-user keys/quotas, and which to avoid and why.
+- [Behavior prompt](docs/behavior-prompt.md) — the optional
+  [`SYSTEM-PROMPT.md`](SYSTEM-PROMPT.md) append: what each rule prevents
+  (with sources), and what deliberately is NOT in the file.
 
 ## Status
 
-This guide was verified on one machine (November 2026): Claude Code 2.1.325 +
-vLLM 0.33, Anthropic route with bearer auth, one custom model, interactive
-mode and `-p` mode, tool use included.
+This guide was verified November 2026 on Linux and macOS — one gateway,
+one model: Claude Code 2.1.325 + vLLM 0.33, Anthropic route with bearer
+auth, interactive mode and `-p` mode, tool use included. The installer,
+wizard and self-test run in CI against a local stub on both Linux and
+macOS runners; the versions above are from a live OpenAI-compatible
+gateway.
 
 `SYSTEM-PROMPT.md` (in this repo) is optional: the setup above works fully
 without it. It adds rules that make an open model behave more like
 Anthropic's models inside Claude Code — see
-[Behavior prompt (optional)](#behavior-prompt-optional).
+[Behavior prompt](docs/behavior-prompt.md).
+
+## Getting help
+
+- Questions and bugs: [open an issue](https://github.com/randomm/claude-qwen/issues) —
+  include what you ran, what came back, your OS, and which commit you
+  installed from (`QLAUDE_REF`, or `git -C ... rev-parse` if pinned).
+- Security issues: please do not open a public issue — use GitHub's
+  *Report a vulnerability* private form on the repository's Security
+  tab; if that form is unavailable, open an issue titled `security`
+  with no details and a maintainer will reach out privately.
+- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md) — the offline test suite,
+  the shellcheck/dash gates, the line budgets, and the README rules.
 
 Licensed under the [Apache License 2.0](LICENSE) — use it, fork it, ship it
 in your company.

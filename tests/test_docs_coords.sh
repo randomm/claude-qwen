@@ -62,4 +62,27 @@ done
 if grep -qF 'qlaude -- -p' "$readme"; then st=0; else st=1; fi
 t "README documents the qlaude -- passthrough" 0 $st
 
+# readme-accessibility (2026-11-18): the hero terminal sketch is a sketch —
+# keep it labeled, and keep every relative markdown link in the user-facing
+# docs resolvable (a dead link is the #1 "abandoned repo" tell; the docs/
+# split must ship whole or README links die).
+if grep -qF '(output sketch' "$readme"; then st=0; else st=1; fi
+t "README terminal sketch stays labeled (output sketch)" 0 $st
+
+_dead=0
+_check_links() { # $1 = repo-relative markdown file
+    _f=$1; _dir=$(dirname "$root/$_f")
+    while IFS= read -r _l; do
+        [ -n "$_l" ] || continue
+        [ -f "$_dir/$_l" ] || { echo "  dead link in $_f -> $_l"; _dead=1; }
+    done <<EOF2
+$(grep -oE '\]\([A-Za-z0-9_./-]+\.md\)' "$root/$_f" | sed 's/^](//; s/)$//')
+EOF2
+}
+_check_links README.md
+for _d in docs/auto-mode.md docs/gateways.md docs/behavior-prompt.md docs/README.md; do
+    _check_links "$_d"
+done
+t "every relative markdown link in README + docs resolves" 0 "$_dead"
+
 exit "$fail"
