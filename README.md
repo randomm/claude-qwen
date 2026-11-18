@@ -337,10 +337,8 @@ Anthropic's models inside Claude Code — see
 - Questions and bugs: [open an issue](https://github.com/randomm/qlaude/issues) —
   include what you ran, what came back, your OS, and which commit you
   installed from (`QLAUDE_REF`, or `git -C ... rev-parse` if pinned).
-- Security issues: please do not open a public issue — use GitHub's
-  *Report a vulnerability* private form on the repository's Security
-  tab; if that form is unavailable, open an issue titled `security`
-  with no details and a maintainer will reach out privately.
+- Security issues: please do not open a public issue — report privately
+  via [SECURITY.md](SECURITY.md) (GitHub's *Report a vulnerability* form).
 - Contributions: [CONTRIBUTING.md](CONTRIBUTING.md) — the offline test suite,
   the shellcheck/dash gates, the line budgets, and the README rules.
 
