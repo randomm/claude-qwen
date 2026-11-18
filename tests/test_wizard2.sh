@@ -240,6 +240,7 @@ except ChildProcessError:
     t "  early-injected token still captured to config (read not lost)" 0 $st
 fi
 
+D
 # audit 2026-11-18: 401 from the model probe must name the TOKEN, not reachability.
 mkdir -p "$tmp/pconf8"
 printf 'appended prompt body\n' >"$tmp/pconf8/SYSTEM-PROMPT.md"
@@ -249,5 +250,30 @@ if printf '%s\n' "$out" | grep -q 'rejected the token'; then st=0; else st=1; fi
 t "probe 401: note names the token, not reachability" 0 $st
 if printf '%s\n' "$out" | grep -q 'unreachable'; then st=1; else st=0; fi
 t "  probe 401: no false 'unreachable' claim" 0 $st
+# Audit polish (2026-11-18): an empty/whitespace-only endpoint was accepted,
+# saved as QLAUDE_ENDPOINT= and reported "saved" — every launch then said
+# "run: qlaude setup", the wizard just completed. Must exit 1 writing nothing
+# (mirrors the empty-model guard, §5.4).
+mkdir -p "$tmp/pconf5" "$tmp/pconf6"
+printf 'appended prompt body\n' >"$tmp/pconf5/SYSTEM-PROMPT.md"
+printf 'appended prompt body\n' >"$tmp/pconf6/SYSTEM-PROMPT.md"
+if command -v python3 >/dev/null 2>&1; then
+    printf '\nptytoken-9x\nmymodel\n\nxhigh\n' | _pty_run \
+        env -i PATH="$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
+        QLAUDE_CONFIG_DIR="$tmp/pconf5" QLAUDE_INSTALL_DIR="$tmp/bin" \
+        SHIM_LOG="$tmp/curl.argv" sh "$tool" setup \
+        >"$tmp/pty5.out" 2>&1
+    rc=$?
+    if [ "$rc" -eq 1 ] && [ ! -f "$tmp/pconf5/config.env" ]; then st=0; else st=1; fi
+    t "empty endpoint at the prompt: exit 1, no config written" 0 $st
+    if _strip_pty "$tmp/pty5.out" | grep -qi 'endpoint required'; then st=0; else st=1; fi
+    t "  anti-vacuous: the guard's own error is on the transcript" 0 $st
+fi
+printf '%s\n' "$QLAUDE_CI_TOKEN" | _run "$tmp/pconf6" -y --endpoint "   " \
+    --model my-model --token-stdin --claude-bin "$tmp/bin/claude" >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 1 ] && [ ! -f "$tmp/pconf6/config.env" ]; then st=0; else st=1; fi
+t "whitespace-only --endpoint: exit 1, no config written" 0 $st
+n
 
 exit "$fail"

@@ -72,6 +72,33 @@ run_install() { # env-args... ; runs installer with isolated HOME/dirs
         "$@" sh "$installer"
 }
 
+_pty_installer() { # installer under a pty — tty-only 'next' line becomes observable
+    python3 -c '
+import os, pty, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+out = b""
+while True:
+    try:
+        b = os.read(fd, 4096)
+    except OSError:
+        break
+    if not b:
+        break
+    out += b
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+sys.stdout.buffer.write(out)
+sys.stdout.buffer.flush()
+' env -u QLAUDE_MODEL -u QLAUDE_ENDPOINT -u QLAUDE_AUTH \
+      HOME="$home" QLAUDE_BASE_URL="$base" QLAUDE_REF=main \
+      QLAUDE_INSTALL_DIR="$tmp/bin-i" QLAUDE_CONFIG_DIR="$tmp/conf-i" \
+      PATH="$tmp/emptybin:/usr/bin:/bin" sh "$installer"
+}
+
 # 1. Happy path.
 out=$(run_install 2>&1); st=$?
 t "install: exit 0" 0 $st
@@ -93,6 +120,15 @@ t "install: PATH guidance when not on PATH" 0 $?
 out2=$(run_install PATH="$tmp/bin-i:/usr/bin:/bin" 2>&1)
 if printf '%s\n' "$out2" | grep -qi 'PATH'; then st=1; else st=0; fi
 t "install: no PATH guidance when already on PATH" 0 $st
+# audit 2026-11-18: the very next command a first-timer copies must run in the
+# SAME shell — guidance carries the absolute install path.
+if printf '%s\n' "$out" | grep -qE 'PATH.*'"$tmp/bin-i/qlaude"; then st=0; else st=1; fi
+t "install: PATH note carries the absolute ensure-path command" 0 $st
+if command -v python3 >/dev/null 2>&1; then
+    _pty_next=$(_pty_installer 2>&1) || true
+    if printf '%s\n' "$_pty_next" | tr -d '\r' | grep -q "$tmp/bin-i/qlaude setup"; then st=0; else st=1; fi
+    t "install (tty): 'next' line is copy-paste runnable (absolute path)" 0 $st
+fi
 
 # 4. Zero rc-file mutation (C4).
 rcs_after=$( (cd "$home" && ls -la .profile .zprofile .bashrc .zshrc) \
