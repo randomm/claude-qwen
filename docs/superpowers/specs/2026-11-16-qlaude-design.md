@@ -1,6 +1,6 @@
 # qlaude — design (rev 2)
 
-Date: 2026-11-16 · Status: REV-2, gate findings folded · Repo: `randomm/claude-qwen` (public)
+Date: 2026-11-16 · Status: REV-2, gate findings folded · Repo: `randomm/qlaude` (public; renamed from `claude-qwen` 2026-11-18)
 Evidence: 4 cited research lanes (`/opt/data/cache/delegation/live/deleg_00528480/`) + 3
 pre-build gate lanes builder/cold-reader/adversarial (`.../deleg_8d4c7732/`), all 2026-11-16.
 Platform claims carry [lane-N] citations; anything not verified is marked [INFERENCE].

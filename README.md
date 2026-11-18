@@ -1,6 +1,6 @@
-# claude-qwen — Claude Code against your own model server
+# qlaude — Claude Code against your own model server
 
-[![CI](https://github.com/randomm/claude-qwen/actions/workflows/ci.yml/badge.svg)](https://github.com/randomm/claude-qwen/actions/workflows/ci.yml)
+[![CI](https://github.com/randomm/qlaude/actions/workflows/ci.yml/badge.svg)](https://github.com/randomm/qlaude/actions/workflows/ci.yml)
 [![Apache-2.0 licensed](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Run [Claude Code](https://code.claude.com) — Anthropic's terminal coding
@@ -41,7 +41,7 @@ for you. The manual path — the Setup block itself — still works and is
 documented below; `qlaude` is not required.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
 ```
 
 That paste installs `~/.local/bin/qlaude` plus
@@ -58,8 +58,8 @@ looks like this (output sketch — your server URL and model names will
 differ):
 
 ```text
-$ curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
-qlaude install: fetching from https://raw.githubusercontent.com/randomm/claude-qwen/main
+$ curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
+qlaude install: fetching from https://raw.githubusercontent.com/randomm/qlaude/main
 qlaude install: checksums verified (truncation/corruption guard; supply chain = TLS + the host)
 qlaude install: installed ~/.local/bin/qlaude
 qlaude install: PATH note: ~/.local/bin is not on PATH — copy-paste now: export PATH="$HOME/.local/bin:$PATH" (then: ~/.local/bin/qlaude ensure-path)
@@ -97,7 +97,7 @@ qlaude -- -p "Reply with exactly: OK" --max-turns 1
   from your secret store or a file mount, not shell history):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
 printf '%s' "$YOUR_TOKEN" | ~/.local/bin/qlaude setup -y --token-stdin \
   --endpoint https://models.example.com --model my-model
 ```
@@ -250,7 +250,7 @@ setup was broken, so old errors keep appearing.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/randomm/claude-qwen` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
+| `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/randomm/qlaude` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
 | `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a known-good version with `QLAUDE_REF=<40-char-commit-sha>` (no releases are tagged yet; CI pins it to the PR commit) |
 | `QLAUDE_INSTALL_DIR` | `~/.local/bin` | Where `qlaude` lands. Must be an absolute path (a relative entry in PATH resolves against every future shell's cwd) |
 | `QLAUDE_CONFIG_DIR` | `~/.config/qlaude` | Where `config.env` (mode 0600) and `SYSTEM-PROMPT.md` live |
@@ -334,7 +334,7 @@ Anthropic's models inside Claude Code — see
 
 ## Getting help
 
-- Questions and bugs: [open an issue](https://github.com/randomm/claude-qwen/issues) —
+- Questions and bugs: [open an issue](https://github.com/randomm/qlaude/issues) —
   include what you ran, what came back, your OS, and which commit you
   installed from (`QLAUDE_REF`, or `git -C ... rev-parse` if pinned).
 - Security issues: please do not open a public issue — use GitHub's
