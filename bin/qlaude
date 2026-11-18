@@ -382,10 +382,11 @@ cmd_setup() {
         IFS= read -r _ep || _ep=''
         [ -n "$_echo_off" ] && [ -n "$_ep" ] && err "endpoint (read back): $(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')"
     fi
-    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path (/v1/v1/models
-    # → false 'unreachable', raw value saved). Normalize like parse does, BEFORE probe.
+    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path → false
+    # 'unreachable', raw value saved. Normalize like parse does, BEFORE probe.
     _ep=${_ep%/}
     case $_ep in */v1) _ep=${_ep%/v1} ;; esac
+    [ -n "$(printf '%s' "$_ep" | tr -d '[:space:]')" ] || { err "endpoint required — empty endpoint would break every launch"; usage_setup >&2; return 1; }
     # token before probe, never echoed (C9). tty+stdin-flag still hides; plain read keeps newline-less final line.
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then prompt "token via stdin (hidden; stored 0600, never printed): "; _hidden_read _tok; printf '\n' >&2; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
