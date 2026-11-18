@@ -20,7 +20,9 @@ This README is endpoint-agnostic: `<your-endpoint>`, `<your-model-name>` and
 
 `qlaude` is the launcher this repo ships: a single POSIX-sh script that
 stores your endpoint/model/token in `~/.config/qlaude/config.env` (mode
-0600; macOS keeps the token in the keychain instead), runs the checks
+0600; on macOS an *unattended* no-terminal setup additionally stores the
+token in the keychain — interactive setup keeps it in the file and says so,
+because Apple's `security` tool blind-prompts the terminal for the secret), runs the checks
 below as `qlaude doctor`, and launches Claude Code with every export from
 the [Setup](#setup) block set for you. The manual path — the Setup block
 itself — still works and is documented below; `qlaude` is not required.
@@ -96,7 +98,9 @@ marker block from the file it named (`~/.profile` by default,
 
 Works on Linux and macOS — everything here is POSIX `sh` plus `curl` and
 `npm`; the CI suite runs under `sh`, `dash` and `bash`, and the token ladder
-uses the macOS keychain when it is there.
+prefers the macOS keychain entry when one exists (headless setup writes it
+with the token on stdin only — never in a command line — and trusts it only
+after a read-back match).
 
 1. Node.js v18+ (ships `npm`), then Claude Code:
    `npm install -g @anthropic-ai/claude-code`. Check `claude --version`

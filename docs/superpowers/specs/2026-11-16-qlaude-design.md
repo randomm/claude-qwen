@@ -89,13 +89,19 @@ rule): very easy and low friction, or developers will not use it.
   Gatekeeper-blocked ([lane-1]). Docs still lead with download-then-run; pipe version
   documented with the caveat (Sandstorm analysis, [lane-3]).
 - C6 — Token ladder (lanes 1/2/4 + gate findings):
-  - macOS → Keychain: write with `security add-generic-password -U -a "$USER" -s qlaude -w`
-    **with the token piped on stdin, never as `-w <token>` argv** (argv leaks to process
-    listings — G4; verified pattern: apple.stackexchange.com/questions/313494,
-    github.com/erikdarlingdata/PerformanceStudio/pull/601). Read with
-    `find-generic-password -s qlaude -w`. Locked/odd keychain degrades to the file path
-    with a printed note, never a hard fail. No-prompt behavior of these calls is
-    [INFERENCE] pending the A7 Mac check.
+  - macOS → Keychain (amended 2026-11-18, real-run finding + noni
+    wizard-input-picker-keychain-composite): `security add-generic-password -w`
+    reads the secret via getpass **on /dev/tty, never the pipe** — with a controlling
+    tty it blind-prompts "password data for new item" and Enter-Enter stores an EMPTY
+    item with rc 0. So the Keychain is for **unattended (no-tty) runs only**: write with
+    double-line stdin (`printf '%s\n%s\n' "$tok" "$tok" | security add-generic-password
+    -U -a "$USER" -s qlaude -w`), token never as `-w <token>` argv (G4), **read-back
+    equality is the sole success gate** (rc lies), any mismatch scrubs via
+    `delete-generic-password` and degrades to the file with a printed note.
+    **Interactive setup makes zero add/delete calls** and announces the 0600 file as the
+    destination. `token_source` reports keychain only on a NON-EMPTY read-back.
+    The old "no-prompt [INFERENCE]" is refuted; A7 still owns the locked-keychain and
+    SSH/headless matrix.
   - Everywhere → `${CONFDIR}/config.env` at mode `0600`, the gh/docker plaintext-fallback
     model. Token exported only into the exec'd claude child.
   - All qlaude-issued curl calls that carry the token pass it via `curl -K -` with the
@@ -246,7 +252,7 @@ can't pass against a stub by nature — SKIP is honest, faked PASS is not).
 
 ## 6. Security posture
 
-- Token: keychain (macOS, **stdin write**, C6) or 0600 file; exported only into the claude
+- Token: keychain (macOS, headless runs only, **stdin write + read-back gate**, C6) or 0600 file; exported only into the claude
   child; never logged, never in `doctor`/`config`, never in **any argv** (`security` and
   `curl` both take it via stdin); never in repo (CI uses the distinctive dummy
   `qlaude-ci-dummy-token-8f31`). `set -x` in launcher code paths is banned (traces leak
