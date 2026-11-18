@@ -33,6 +33,7 @@ never its value)
 - OS (e.g. Ubuntu 24.04, macOS 15.7):
 - `qlaude --version`:
 - `claude --version`:
-- Which commit did you install from? (`QLAUDE_REF` value, or output of
-  `git -C <repo> rev-parse HEAD` if you pinned one)
+- Which commit did you install from? (`QLAUDE_REF` value; the installer
+  fetches single files, so there is no local clone to query — if you left
+  it on `main`, the install date helps)
 - Model server + version (e.g. vLLM 0.33):
