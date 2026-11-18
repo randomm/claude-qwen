@@ -119,10 +119,12 @@ t "  anti-vacuous: preview line (the echo surface) was captured" 0 $st
 conf4="$tmp/conf4"
 mkdir -p "$conf4"
 printf 'appended prompt body\n' >"$conf4/SYSTEM-PROMPT.md"
-printf 'QLAUDE_ENDPOINT=%s\n' "$base" >"$conf4/config.env"
-printf 'QLAUDE_MODEL=x\033]52;c;dGVzdA==\007pwned\n' >>"$conf4/config.env"
-printf 'QLAUDE_CLAUDE_BIN=%s/claude\033]0;t\007x\n' "$tmp/bin" >>"$conf4/config.env"
-printf 'QLAUDE_TOKEN=whatever\n' >>"$conf4/config.env"
+{ # SC2129: one redirect for the whole hostile-value fixture
+printf 'QLAUDE_ENDPOINT=%s\n' "$base"
+printf 'QLAUDE_MODEL=x\033]52;c;dGVzdA==\007pwned\n'
+printf 'QLAUDE_CLAUDE_BIN=%s/claude\033]0;t\007x\n' "$tmp/bin"
+printf 'QLAUDE_TOKEN=whatever\n'
+} >"$conf4/config.env"
 chmod 600 "$conf4/config.env"
 : >/dev/null
 printf '%s' "$QLAUDE_CI_TOKEN" | env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
