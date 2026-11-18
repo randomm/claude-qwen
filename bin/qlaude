@@ -366,7 +366,7 @@ cmd_setup() {
                 QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
                 QLAUDE_EFFORT=*) [ -z "$_ef" ] && _ef=${_line#*=} ;;
                 QLAUDE_CLAUDE_BIN=*) [ -z "$_cb" ] && _cb=${_line#*=} ;;
-                QLAUDE_TOKEN=*) [ -z "$_tok" ] && _tok=${_line#*=} ;;
+                QLAUDE_TOKEN=*) if [ -z "$_tok" ]; then _tok=${_line#*=}; [ -n "${_tok_stdin:-}" ] || err "preview: keeping stored token — to replace it: qlaude setup --token-stdin"; fi ;;
             esac
         done <"$_cf"
     fi
