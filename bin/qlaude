@@ -159,7 +159,7 @@ cmd_ensure_path() {
         err "could not write $_f — check its permissions"
         return "$EXIT_PREREQ"
     fi
-    err "PATH updated in $_f — open a new terminal to pick it up"
+    err "PATH updated in $_f — interactive bash reads ~/.bashrc, not this file; paste now: export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
 }
 usage_setup() { # wizard usage (§5.4)
     cat <<'USAGE'
@@ -215,14 +215,14 @@ EOF
             return "$EXIT_AUTH" ;;
         404)
             if [ "${1:-}" = 1 ]; then
-                gline FAIL 1 messages "404 at $QLAUDE_ENDPOINT/v1/messages → likely a /v1 path issue (README Setup)"
+                gline FAIL 1 messages "404 at $(_asc "$QLAUDE_ENDPOINT")/v1/messages → likely a /v1 path issue (README Setup)"
                 return "$EXIT_AUTH"
             fi
             case $QLAUDE_ENDPOINT in
                 */v1) _fx=${QLAUDE_ENDPOINT%/v1} ;;
                 *) _fx="$QLAUDE_ENDPOINT/v1" ;;
             esac
-            err "note: 404 — retrying once with a corrected /v1 path: $_fx (printed auto-fix, spec §5.5)"
+            err "note: 404 — retrying once with a corrected /v1 path: $(_asc "$_fx") (printed auto-fix, spec §5.5)"
             QLAUDE_ENDPOINT=$_fx step1_messages 1
             return $? ;;
         401 | 403)
@@ -280,8 +280,7 @@ _probe_claude() {
             api-key) export ANTHROPIC_API_KEY="$_G_TOK" ;;
             *) export ANTHROPIC_AUTH_TOKEN="$_G_TOK" ;;
         esac
-        # effort mirrors launch (§5.3): unset here meant Claude Code's default 'high'
-        # hit low|medium|xhigh servers → 400 → false FAIL 2 (dogfood 2026-11-17).
+        # effort mirrors launch (§5.3): unset here let CC's default 'high' hit low|medium|xhigh servers → 400 → false FAIL 2 (dogfood 2026-11-17).
         export HOME="$_d" ANTHROPIC_BASE_URL="$QLAUDE_ENDPOINT" \
             ANTHROPIC_MODEL="$QLAUDE_MODEL" CLAUDE_CODE_EFFORT_LEVEL="$QLAUDE_EFFORT"
         if [ -n "${3:-}" ]; then
@@ -358,23 +357,24 @@ cmd_setup() {
         while IFS= read -r _line || [ -n "$_line" ]; do
             case $_line in
                 QLAUDE_ENDPOINT=*)
-                    if [ -z "$_ep" ]; then _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi
+                    # audit: corrupt data is DROPPED at ingest, not kept for a late post-interview abort.
+                    if [ -z "$_ep" ]; then if _has_bad_char "${_line#*=}"; then err "preview: corrupt QLAUDE_ENDPOINT ignored — re-enter it"; else _ep=${_line#*=}; err "preview: keeping QLAUDE_ENDPOINT=$(_asc "$_ep")"; fi; fi
                     ;;
                 QLAUDE_MODEL=*)
-                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$_md"; fi
+                    if [ -z "$_md" ]; then _md=${_line#*=}; err "preview: keeping QLAUDE_MODEL=$(_asc "$_md")"; fi
                     ;;
-                QLAUDE_AUTH=*) [ -z "$_au" ] && _au=${_line#*=} ;;
-                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && _ct=${_line#*=} ;;
-                QLAUDE_EFFORT=*) [ -z "$_ef" ] && _ef=${_line#*=} ;;
+                QLAUDE_AUTH=*) [ -z "$_au" ] && { case ${_line#*=} in bearer|api-key) _au=${_line#*=} ;; *) err "preview: invalid QLAUDE_AUTH ignored — re-enter it (or leave bearer)" ;; esac; } ;;
+                QLAUDE_CONTEXT_TOKENS=*) [ -z "$_ct" ] && { case ${_line#*=} in ''|*[!0-9]*) err "preview: invalid QLAUDE_CONTEXT_TOKENS ignored — re-enter digits" ;; *) _ct=${_line#*=} ;; esac; } ;;
+                QLAUDE_EFFORT=*) [ -z "$_ef" ] && { case ${_line#*=} in low|medium|high|xhigh) _ef=${_line#*=} ;; *) err "preview: invalid QLAUDE_EFFORT ignored — re-enter low/medium/xhigh" ;; esac; } ;;
                 QLAUDE_CLAUDE_BIN=*) [ -z "$_cb" ] && _cb=${_line#*=} ;;
-                QLAUDE_TOKEN=*) [ -z "$_tok" ] && _tok=${_line#*=} ;;
+                QLAUDE_TOKEN=*) if [ -z "$_tok" ]; then _tok=${_line#*=}; [ -n "${_tok_stdin:-}" ] || err "preview: keeping stored token — to replace it: qlaude setup --token-stdin"; fi ;;
             esac
         done <"$_cf"
     fi
     # claude present? detect-then-offer, never silent, never silent-install.
     _cb=${_cb:-claude}
     if ! command -v "$_cb" >/dev/null 2>&1; then
-        err "claude bin '$_cb' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
+        err "claude bin '$(_asc "$_cb")' not found — install Claude Code (official: npm install -g @anthropic-ai/claude-code) or pass --claude-bin"
     fi
     # endpoint first so the token prompt names its target (owner UX); token still precedes probe (§5.4).
     if [ -z "$_ep" ]; then
@@ -383,10 +383,10 @@ cmd_setup() {
         IFS= read -r _ep || _ep=''
         [ -n "$_echo_off" ] && [ -n "$_ep" ] && err "endpoint (read back): $(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')"
     fi
-    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path (/v1/v1/models
-    # → false 'unreachable', raw value saved). Normalize like parse does, BEFORE probe.
+    # dogfood 2026-11-17: a typed trailing /v1 doubled the probe path → false 'unreachable', raw value saved. Normalize like parse does, BEFORE probe.
     _ep=${_ep%/}
     case $_ep in */v1) _ep=${_ep%/v1} ;; esac
+    [ -n "$(printf '%s' "$_ep" | tr -d '[:space:]')" ] || { err "endpoint required — empty endpoint would break every launch"; usage_setup >&2; return 1; }
     # token before probe, never echoed (C9). tty+stdin-flag still hides; plain read keeps newline-less final line.
     if [ -n "$_tok_stdin" ]; then if [ -t 0 ]; then prompt "token via stdin (hidden; stored 0600, never printed): "; _hidden_read _tok; printf '\n' >&2; else IFS= read -r _tok; fi; fi
     if [ -z "$_tok" ] && [ -t 0 ]; then
@@ -402,6 +402,7 @@ cmd_setup() {
     [ -n "$_echo_off" ] && { stty echo 2>/dev/null; trap - EXIT INT TERM; _echo_off=''; }
     # echoed endpoint also ASCII-filtered: env-inherited is as untrusted.
     _epd=$(printf '%s' "$_ep" | LC_ALL=C tr -cd '\040-\176')
+    _has_bad_char "$_ep" && { err "endpoint must not contain quote or line break (config corruption?) — re-enter the URL"; return 1; }
     _ids=$(probe_models "$_ep" "$_tok") && [ -n "$_ids" ] || _ids=''
     if [ -n "$_ids" ]; then
         err "discovered models from $_epd/v1/models: $_ids"
