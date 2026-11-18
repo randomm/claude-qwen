@@ -240,7 +240,6 @@ except ChildProcessError:
     t "  early-injected token still captured to config (read not lost)" 0 $st
 fi
 
-D
 # audit 2026-11-18: 401 from the model probe must name the TOKEN, not reachability.
 mkdir -p "$tmp/pconf8"
 printf 'appended prompt body\n' >"$tmp/pconf8/SYSTEM-PROMPT.md"
@@ -274,6 +273,5 @@ printf '%s\n' "$QLAUDE_CI_TOKEN" | _run "$tmp/pconf6" -y --endpoint "   " \
 rc=$?
 if [ "$rc" -eq 1 ] && [ ! -f "$tmp/pconf6/config.env" ]; then st=0; else st=1; fi
 t "whitespace-only --endpoint: exit 1, no config written" 0 $st
-n
 
 exit "$fail"
