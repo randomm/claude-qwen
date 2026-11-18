@@ -224,4 +224,91 @@ st=$?
 if [ "$st" -ne 0 ] && printf '%s\n' "$out" | grep -qiE 'refus|non-https'; then st=0; else st=1; fi
 t "ftp base URL refused with a named refusal" 0 $st
 
+# 13-16 (#82, spec §5.6 'offer qlaude setup if TTY' + owner directive one-paste):
+# under a TTY the installer runs the existing interview itself via /dev/tty
+# (rustup pattern — piped stdin is drained, so the child re-attaches to the
+# terminal). Gated off for CI (CI set), for scripts (QLAUDE_NO_SETUP=1) and
+# for any non-tty run, which keep the printed 'next' line instead.
+_pty_feed() { # feed=$1 extra-env KEY=VAL... ; installer under a pty, answers
+# written after a settle; child killed at the window so the suite cannot hang.
+    _ff=$1; shift
+    python3 -c '
+import os, pty, sys, time, select, signal
+feed = open(sys.argv[1], "rb").read()
+argv = sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(argv[0], argv)
+time.sleep(0.6)
+try:
+    os.write(fd, feed)
+except OSError:
+    pass
+log = b""
+t0 = time.time()
+dead = False
+while time.time() - t0 < 35 and not dead:
+    r, _, _ = select.select([fd], [], [], 0.3)
+    if r:
+        try:
+            b = os.read(fd, 4096)
+        except OSError:
+            break
+        if not b:
+            break
+        log += b
+    else:
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                dead = True
+        except ChildProcessError:
+            dead = True
+try:
+    os.kill(pid, signal.SIGKILL)
+except (ProcessLookupError, PermissionError):
+    pass
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+sys.stdout.buffer.write(log)
+sys.stdout.buffer.flush()
+' "$_ff" env -u QLAUDE_MODEL -u QLAUDE_ENDPOINT -u QLAUDE_AUTH \
+      HOME="$home" QLAUDE_BASE_URL="$base" QLAUDE_REF=main \
+      QLAUDE_INSTALL_DIR="$tmp/bin-p" QLAUDE_CONFIG_DIR="$tmp/conf-p" \
+      QLAUDE_STUB=1 PATH="$tmp/bin-p:/usr/bin:/bin" "$@" \
+      sh "$installer" >"$tmp/pty_p.out" 2>&1 || true
+}
+
+mkdir -p "$tmp/bin-p"
+cat >"$tmp/bin-p/claude" <<'SHIMP'
+#!/bin/sh
+case "$*" in
+    --version) echo "fake-claude 0.0.0" ;;
+    *) echo "OK"
+esac
+SHIMP
+chmod +x "$tmp/bin-p/claude"
+printf 'http://127.0.0.1:%s\n%s\nstub-model\n\nxhigh\n' \
+    "$QLAUDE_STUB_PORT" "$QLAUDE_CI_TOKEN" >"$tmp/feed_p"
+
+[ -n "${QLAUDE_STUB_PORT:-}" ] || { echo "installer test: harness must export QLAUDE_STUB_PORT" >&2; exit 2; }
+_pty_feed "$tmp/feed_p" env -u QLAUDE_NO_SETUP
+if tr -d '\r' <"$tmp/pty_p.out" | grep -q 'endpoint URL'; then st=0; else st=1; printf '%s\n' "$(tail -5 "$tmp/pty_p.out")" >&2; fi
+t "#82 (tty): installer runs the guided interview itself" 0 $st
+if [ -f "$tmp/conf-p/config.env" ] \
+    && grep -qxF 'QLAUDE_MODEL=stub-model' "$tmp/conf-p/config.env" \
+    && grep -qxF 'QLAUDE_EFFORT=xhigh' "$tmp/conf-p/config.env"; then st=0; else st=1; fi
+t "#82 single paste: the fed interview saved a real config.env" 0 $st
+
+# anti-vacuous 1: the documented script escape must keep the installer silent.
+_pty_feed "$tmp/feed_p" env QLAUDE_NO_SETUP=1
+if tr -d '\r' <"$tmp/pty_p.out" | grep -q 'endpoint URL'; then st=1; else st=0; fi
+t "#82 QLAUDE_NO_SETUP=1: no wizard under a tty (printed next-line only)" 0 $st
+
+# anti-vacuous 2: CI-like environments never get an interactive surprise.
+_pty_feed "$tmp/feed_p" env CI=true
+if tr -d '\r' <"$tmp/pty_p.out" | grep -q 'endpoint URL'; then st=1; else st=0; fi
+t "#82 CI=1: no wizard under a tty" 0 $st
+
 exit "$fail"
