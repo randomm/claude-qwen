@@ -1,7 +1,8 @@
 #!/bin/sh
 # ensure-path suite (plan T6, spec §5.7): marker-block idempotency, foreign
 # block refusal, --dry-run touches nothing, shell/OS target table, and the
-# "open a new terminal" hint. Never writes outside its marker block.
+# honest paste-now hint (bashrc caveat, audit 2026-11-18). Never writes
+# outside its marker block.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -49,8 +50,13 @@ if [ ! -e "$tmp/home/.zprofile" ]; then st=0; else st=1; fi
 t "linux+bash left the zsh rc alone" 0 $st
 if grep -q "$tmp/bin" "$tmp/home/.profile"; then st=0; else st=1; fi
 t "block exports the install dir on PATH" 0 $st
-if printf '%s\n' "$out" | grep -qi 'new terminal'; then st=0; else st=1; fi
-t "prints the open-a-new-terminal hint" 0 $st
+# audit 2026-11-18: 'open a new terminal' was a false promise on Linux+bash —
+# interactive terminals read ~/.bashrc, not ~/.profile. The hint must state
+# the caveat and hand over the paste-now export instead of promising pickup.
+if printf '%s\n' "$out" | grep -qi 'bashrc' && printf '%s\n' "$out" | grep -q 'export PATH='; then st=0; else st=1; fi
+t "success hint names the bashrc caveat and the paste-now export" 0 $st
+if printf '%s\n' "$out" | grep -qi 'open a new terminal'; then st=1; else st=0; fi
+t "  no false 'new terminal' promise remains" 0 $st
 
 # 2. Idempotent: second run must leave exactly ONE block.
 run_ep >/dev/null 2>&1
