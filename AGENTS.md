@@ -1,4 +1,4 @@
-# AGENTS.md — claude-qwen
+# AGENTS.md — qlaude
 
 Rules for AI agents working in this repo. Humans: the product is `README.md`;
 contributing context lives there and in the spec. This file is for agents.

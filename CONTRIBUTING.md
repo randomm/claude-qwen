@@ -1,4 +1,4 @@
-# Contributing to qlaude / claude-qwen
+# Contributing to qlaude
 
 Small fixes are welcome: docs typos, failure modes you hit with the exact
 command that triggered them, tests for reported bugs. For anything bigger,

@@ -122,7 +122,7 @@ jobs:
         env:
           FETCH_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
-          QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/claude-qwen \
+          QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/qlaude \
           QLAUDE_REF="$FETCH_REF" \
           QLAUDE_INSTALL_DIR="$RUNNER_TEMP/bin" \
             sh install.sh
@@ -179,7 +179,7 @@ jobs:
           for i in $(seq 50); do [ -s "$CH/stub.port" ] && break; sleep 0.1; done
           STUB_PORT=$(cat "$CH/stub.port")
           HOME="$CH" QLAUDE_CI_TOKEN=qlaude-ci-dummy-token-8f31 \
-          QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/claude-qwen \
+          QLAUDE_BASE_URL=https://raw.githubusercontent.com/randomm/qlaude \
           QLAUDE_REF="$FETCH_REF" \
           QLAUDE_INSTALL_DIR="$CH/bin" QLAUDE_CONFIG_DIR="$CH/conf" \
           QLAUDE_STUB=1 STUB_PORT="$STUB_PORT" CLAUDE_BIN="$(command -v claude)" \
