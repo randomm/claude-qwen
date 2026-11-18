@@ -128,6 +128,34 @@ t "v1-suffix: trailing /v1 stripped" 0 $st
 grep -qi 'v1' "$tmp/v1.warn"
 t "v1-suffix: warning printed" 0 $?
 
+# 4b (audit 2026-11-18): trailing-slash forms must normalize too — 'host/v1/'
+# was kept raw, and the step-1 404 auto-fix then made it worse (host/v1//v1).
+cat >"$tmp/sl1" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com/v1/
+QLAUDE_MODEL=my-model
+CFG
+QLAUDE_ENDPOINT='' QLAUDE_MODEL=''
+config_parse "$tmp/sl1" 2>/dev/null
+t "v1-slash: parse exits 0" 0 $?
+if [ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]; then st=0; else st=1; fi
+t "v1-slash: host/v1/ normalized like host/v1" 0 $st
+cat >"$tmp/sl2" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com/
+QLAUDE_MODEL=my-model
+CFG
+QLAUDE_ENDPOINT='' QLAUDE_MODEL=''
+config_parse "$tmp/sl2" 2>/dev/null
+if [ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]; then st=0; else st=1; fi
+t "trailing slash: host/ normalized" 0 $st
+cat >"$tmp/sl3" <<'CFG'
+QLAUDE_ENDPOINT=https://models.example.com//
+QLAUDE_MODEL=my-model
+CFG
+QLAUDE_ENDPOINT='' QLAUDE_MODEL=''
+config_parse "$tmp/sl3" 2>/dev/null
+if [ "$QLAUDE_ENDPOINT" = "https://models.example.com" ]; then st=0; else st=1; fi
+t "trailing slashes: host// normalized" 0 $st
+
 # 5. Bad auth style is refused like corruption.
 cat >"$tmp/badauth" <<'CFG'
 QLAUDE_ENDPOINT=https://models.example.com
