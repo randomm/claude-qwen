@@ -183,11 +183,7 @@ if command -v python3 >/dev/null 2>&1; then
     # on the SAME line (no newline emitted after a prompt). Colour is
     # shell-dependent under a pty (dash emits ANSI even with TERM unset),
     # so strip escape sequences before matching, on every host.
-    if _strip_pty "$tmp/pty.out" | grep -q 'route to): qlaude: endpoint (read back)'; then
-        st=0
-    else
-        st=1
-    fi
+    if _strip_pty "$tmp/pty.out" | grep -q 'route to.*http://127.0.0.1:1'; then st=0; else st=1; fi
     t "endpoint prompt keeps the cursor on its own line" 0 $st
     # empty model at the model prompt: must refuse to save, not write a
     # QLAUDE_MODEL= empty value (guard is a new T7-adjacent fix).
@@ -221,7 +217,7 @@ if command -v python3 >/dev/null 2>&1 && command -v dash >/dev/null 2>&1; then
     # is the real proof the wizard ran to the save).
     _dp=$(_strip_pty "$tmp/dpty.out")
     if printf '%s\n' "$_dp" | grep -q 'Illegal option'; then st=1
-    elif printf '%s\n' "$_dp" | grep -q 'route to): qlaude: endpoint (read back)' \
+    elif printf '%s\n' "$_dp" | grep -q 'route to.*http://127.0.0.1:1' \
         && printf '%s\n' "$_dp" | grep -q 'qlaude: model'; then st=0
     else st=1; fi
     t "dash wizard: hidden read works (no Illegal option), cursor kept" 0 $st
@@ -314,18 +310,20 @@ done
 printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
     'case "$1" in' \
     'add-generic-password) cat >> "$SEC_STDIN"; exit 0;;' \
-    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && head -1 "$SEC_STDIN"; exit 0;;' \
     'esac' 'exit 0' >"$tmp/macok/security"
 # shellcheck disable=SC2016  # shim body quotes are intentional (runtime vars)
 printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$SEC_ARGV"' \
     'case "$1" in' \
     'add-generic-password) exit 1;;' \
-    'find-generic-password) [ -f "$SEC_STDIN" ] && cat "$SEC_STDIN"; exit 0;;' \
+    'find-generic-password) [ -f "$SEC_STDIN" ] && head -1 "$SEC_STDIN"; exit 0;;' \
     'esac' 'exit 0' >"$tmp/macfail/security"
 chmod +x "$tmp"/macok/* "$tmp"/macfail/*
-run_mac() { # $1 = shim dir; rest = setup args; token on our stdin
+run_mac() { # $1 = shim dir; rest = setup args; token on our stdin. setsid: no
+# controlling tty => the headless keychain branch deterministically (on a tty
+# Mac/Linux dev box /dev/tty opens and setup would skip the keychain by design).
     _shim=$1; shift
-    env -i PATH="$_shim:$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
+    setsid -w env -i PATH="$_shim:$tmp/bin:$tmp/curlshim:/usr/bin:/bin" HOME="$tmp" \
         QLAUDE_CONFIG_DIR="$wconf" QLAUDE_INSTALL_DIR="$tmp/bin" \
         SEC_ARGV="$tmp/sec.argv" SEC_STDIN="$tmp/sec.stdin" \
         SHIM_LOG="$tmp/curl.argv3" \

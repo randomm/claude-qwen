@@ -76,7 +76,9 @@ class Stub(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send(401, {"error": {"type": "authentication_error"}})
             return
-        self._send(200, {"data": [{"id": "stub-model", "object": "model"}]})
+        ids = (os.environ.get("QLAUDE_STUB_MODELS") or "stub-model").split(",")
+        self._send(200, {"data": [{"id": i.strip(), "object": "model"}
+                                  for i in ids if i.strip()]})
 
     def log_message(self, fmt, *args):  # silence access logging
         pass
