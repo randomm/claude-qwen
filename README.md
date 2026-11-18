@@ -1,5 +1,7 @@
 # claude-qwen
 
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Connect [Claude Code](https://code.claude.com) — Anthropic's terminal coding
 agent, a CLI that reads your code, edits files and runs commands — to your own
 model server, so you do not need an Anthropic subscription.
@@ -25,6 +27,7 @@ itself — still works and is documented below; `qlaude` is not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # the installer prints your exact line
 qlaude setup        # asks: endpoint (NO trailing /v1), token (hidden), model, context, effort
 qlaude doctor       # five checks: prereqs, /v1/messages, claude, tools, info
 qlaude              # launches claude with the Setup exports + SYSTEM-PROMPT.md
@@ -63,6 +66,10 @@ marker block from the file it named (`~/.profile` by default,
 `~/.zprofile` for zsh and macOS).
 
 ## Prerequisites
+
+Works on Linux and macOS — everything here is POSIX `sh` plus `curl` and
+`npm`; the CI suite runs under `sh`, `dash` and `bash`, and the token ladder
+uses the macOS keychain when it is there.
 
 1. Node.js v18+ (ships `npm`), then Claude Code:
    `npm install -g @anthropic-ai/claude-code`. Check `claude --version`
@@ -138,6 +145,9 @@ setup was broken, so old errors keep appearing.
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Declares the real context window for model ids Claude Code does not recognize | compaction triggers at the assumed 1M; requests fail with HTTP 400 past the server's real limit. Never set it above `--max-model-len` |
 | `CLAUDE_CODE_AUTO_MODE_MODEL` + `CLAUDE_CODE_BG_CLASSIFIER_MODEL` | Name the model that makes auto-mode safety decisions (main loop + background tasks) — ordinary model calls to your server | unset, the CLI probes Anthropic's default classifier model name on your endpoint and falls back; your server may not have it. See [Auto mode](#auto-mode-and-the-safety-classifier) |
 | `QLAUDE_AUTO_MODE_SERVER` (config.env / env) | `on` keeps Anthropic's server-side auto-mode checks switched on. The qlaude launcher otherwise exports `CLAUDE_CODE_AUTO_MODE_SERVER=0`: an OpenAI-compatible server can never return `safeguard_results`, so asking for server checks only produces the billing notice | leave unset on self-hosted servers; set `on` only behind a gateway implementing the [pass-through contract](https://code.claude.com/docs/en/auto-mode-classifier-billing) |
+| `QLAUDE_AUTH` (config.env) | Auth header style: `bearer` (default) sends `Authorization: Bearer` via `ANTHROPIC_AUTH_TOKEN`; `api-key` sends `x-api-key` via `ANTHROPIC_API_KEY` instead, for gateways that only accept that header | an unrecognized value fails the launch with "config corrupted — run: qlaude setup" (setup also rejects it at entry) |
+| `QLAUDE_CLAUDE_BIN` (config.env / env) | Path to the `claude` binary the launcher execs — for non-PATH installs | a relative value containing a slash is absolutized against the current directory before exec (a CWD-dependent exec would be a hijack vector); a missing target fails launch with a plain "install Claude Code, or set QLAUDE_CLAUDE_BIN" message |
+| `QLAUDE_DEBUG` (env) | `env` prints the launcher's export list before launching, with the token value redacted — the export names and everything else are shown | anything else (including unset) is silent, which is the normal case |
 
 ### Installer coordinates (optional)
 
@@ -363,3 +373,6 @@ mode and `-p` mode, tool use included.
 without it. It adds rules that make an open model behave more like
 Anthropic's models inside Claude Code — see
 [Behavior prompt (optional)](#behavior-prompt-optional).
+
+Licensed under the [MIT License](LICENSE) — use it, fork it, ship it
+in your company.
