@@ -166,11 +166,11 @@ say "installed $INSTALLDIR/qlaude"
 case ":$PATH:" in
     *":$INSTALLDIR:"*) ;;
     *)
-        say "PATH note: $INSTALLDIR is not on PATH — add it via your shell profile, or run: qlaude ensure-path"
+        say "PATH note: $INSTALLDIR is not on PATH — copy-paste now: export PATH=\"$INSTALLDIR:\$PATH\" (then: $INSTALLDIR/qlaude ensure-path)"
         ;;
 esac
 
 if [ -t 1 ]; then
-    say "next: qlaude setup (guided configuration)"
+    say "next: $INSTALLDIR/qlaude setup (guided configuration)"
 fi
 exit 0
