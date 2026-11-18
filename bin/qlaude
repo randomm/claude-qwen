@@ -17,8 +17,9 @@ EXIT_AUTH=3
 EXIT_CLI=4
 # shellcheck disable=SC2034  # spec §5.5 step-3 exit (tool-probe failures)
 EXIT_TOOL=5
-# --- output discipline (C9): stderr only; NO_COLOR honoured on PRESENCE
-if [ "${NO_COLOR+set}" = set ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_ERR=''; else C_ERR=$(printf '\033[31m'); fi
+# --- output discipline (C9 + owner ruling 2026-11-18-nocolor-empty-equals-unset):
+# stderr only; an EMPTY NO_COLOR equals unset (colour on TTY); non-empty suppresses.
+if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ] || [ ! -t 2 ]; then C_ERR=''; else C_ERR=$(printf '\033[31m'); fi
 C_RESET=''
 [ -n "$C_ERR" ] && C_RESET=$(printf '\033[0m')
 err() { printf '%s%sqlaude: %s%s\n' "$C_ERR" '' "$*" "$C_RESET" >&2; }

@@ -122,7 +122,8 @@ rule): very easy and low friction, or developers will not use it.
   (macos-14 retired from the reference table, [lane-3] + verified
   github.blog/changelog 2026-10-01); heavy jobs ubuntu-only.
 - C9 — CLI etiquette baseline ([lane-4], clig.dev/rustup/pipx/gh): prompts on stderr
-  only, data on stdout; `NO_COLOR`/`TERM=dumb`/non-TTY → plain output; **no prompt ever
+  only, data on stdout; non-empty `NO_COLOR` (empty equals unset — owner ruling
+  2026-11-18-nocolor-empty-equals-unset)/`TERM=dumb`/non-TTY → plain output; **no prompt ever
   on a non-TTY** — require `-y` + flags/env, else exit 1 with usage (never hang);
   idempotent re-runs; `--help` works via `sh -s -- --help`; env overrides `QLAUDE_*`.
 
