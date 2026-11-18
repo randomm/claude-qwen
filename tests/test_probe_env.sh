@@ -73,5 +73,22 @@ if grep -q '^CLAUDE_CODE_EFFORT_LEVEL=xhigh$' "$tmp/dump"; then st=0; else st=1;
 t "probe child carries the config effort (mirrors the launch contract)" 0 $st
 if grep -q '^CLAUDE_CODE_EFFORT_LEVEL=high$' "$tmp/dump"; then st=1; else st=0; fi
 t "probe child never gets the rejected 'high' (server enum)" 0 $st
+# four-lens audit 2026-11-18: the probe must mirror the FULL launch contract.
+# With the aliases unset, background traffic (session titles, classifier)
+# asked single-model endpoints for claude-haiku-* ids that endpoint never
+# serves — 404 noise polluted step 2's verbatim dump / failed step 3 with a
+# remedy (tool-call-parser) that was already correct.
+if grep -q '^ANTHROPIC_DEFAULT_HAIKU_MODEL=stub-model$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: haiku alias pinned to the config model" 0 $st
+if grep -q '^ANTHROPIC_DEFAULT_OPUS_MODEL=stub-model$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: opus alias pinned" 0 $st
+if grep -q '^ANTHROPIC_DEFAULT_SONNET_MODEL=stub-model$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: sonnet alias pinned (and stray value replaced)" 0 $st
+if grep -q '^CLAUDE_CODE_BG_CLASSIFIER_MODEL=stub-model$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: classifier model pinned" 0 $st
+if grep -q '^CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: MAX_CONTEXT_TOKENS exported (config default)" 0 $st
+if grep -q '^CLAUDE_CODE_AUTO_MODE_SERVER=0$' "$tmp/dump"; then st=0; else st=1; fi
+t "probe mirrors launch: auto-mode opt-out default" 0 $st
 
 exit "$fail"
