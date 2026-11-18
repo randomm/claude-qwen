@@ -1,6 +1,6 @@
 # claude-qwen
 
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Apache-2.0 licensed](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Connect [Claude Code](https://code.claude.com) — Anthropic's terminal coding
 agent, a CLI that reads your code, edits files and runs commands — to your own
@@ -374,5 +374,5 @@ without it. It adds rules that make an open model behave more like
 Anthropic's models inside Claude Code — see
 [Behavior prompt (optional)](#behavior-prompt-optional).
 
-Licensed under the [MIT License](LICENSE) — use it, fork it, ship it
+Licensed under the [Apache License 2.0](LICENSE) — use it, fork it, ship it
 in your company.
