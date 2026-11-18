@@ -46,6 +46,7 @@ mkdir -p "$tmp/curlshim"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >> "$CURL_LOG"' \
     '_in=$(cat); printf '"'"'%s\n'"'"' "$_in" >>"$CURL_STDIN"' \
+    '[ -f "$FAKE429" ] && { printf "fake throttled body 429"; exit 0; }' \
     "printf '%s' \"\$_in\" | exec $real_curl \"\$@\"" \
     >"$tmp/curlshim/curl"
 chmod +x "$tmp/curlshim/curl"
@@ -66,7 +67,7 @@ run_doc() { # doctor with isolated env; shims log everything
         QLAUDE_CONFIG_DIR="$conf" QLAUDE_INSTALL_DIR="$tmp/bin" \
         CURL_LOG="$tmp/curl.argv" CURL_STDIN="$tmp/curl.stdin" \
         CLAUDE_LOG="$tmp/claude.argv" \
-        QLAUDE_STUB="${QLAUDE_STUB:-}" \
+        QLAUDE_STUB="${QLAUDE_STUB:-}" FAKE429="${FAKE429:-}" \
         QLAUDE_CLAUDE_BIN="${QLAUDE_CLAUDE_BIN:-}" \
         ANTHROPIC_API_KEY=poison-inherited-key \
         HTTPS_PROXY="${HTTPS_PROXY:-}" NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY:-}" \
@@ -184,6 +185,21 @@ t "404: /v1 hint text (hint phrase itself, not endpoint echo)" 0 $st
 _n=$(grep -c '^url = ' "$tmp/curl2.stdin")
 if [ "$_n" -eq 2 ]; then st=0; else st=1; fi
 t "404: exactly one retry attempted (2 requests, no more)" 0 $st
+# audit 2026-11-18: the final 404 FAIL must also name the model id — a renamed
+# served-model-name 404s too, and blaming only the path is a false remedy.
+if printf '%s\n' "$out" | grep -qiE '404 at .*model'; then st=0; else st=1; fi
+t "404 final FAIL also names the model id as a cause" 0 $st
+
+# 6b. audit 2026-11-18: 429 = throttled but UP — 'check the endpoint' is a
+# false remedy (the server just answered). Fake body via curl shim.
+: >"$tmp/fake429"
+out=$(FAKE429="$tmp/fake429" QLAUDE_STUB=1 run_doc 2>&1)
+st=$?
+rm -f "$tmp/fake429"
+if [ "$st" -eq 3 ]; then st=0; else st=1; fi
+t "429: hard fail exit 3" 0 $st
+if printf '%s\n' "$out" | grep -qiE '429.*(throttl|rate.?limit|retry later)'; then st=0; else st=1; fi
+t "429: named as throttling, not an endpoint problem" 0 $st
 
 # 7. Step 2 runs claude under an ISOLATED HOME (C7): the poisoned user
 # ~/.claude.json must not be visible to the probe.
