@@ -51,4 +51,15 @@ case $section in
 esac
 t "  the installer section does not duplicate launch variables" 0 $st
 
+# #83 (blind-read 2026-11-18): surfaces that existed only in source usage
+# lines are now README-documented — a user must be able to run scripted
+# setup and probe through qlaude without reading bin/qlaude.
+for s in QLAUDE_NO_SETUP token-stdin; do
+    if grep -q "$s" "$readme"; then st=0; else st=1; fi
+    t "README documents $s" 0 $st
+done
+# shellcheck disable=SC2016  # the passthrough form is literal shell text
+if grep -qF 'qlaude -- -p' "$readme"; then st=0; else st=1; fi
+t "README documents the qlaude -- passthrough" 0 $st
+
 exit "$fail"
