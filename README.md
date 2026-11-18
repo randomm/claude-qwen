@@ -27,11 +27,38 @@ itself — still works and is documented below; `qlaude` is not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"   # the installer prints your exact line
-qlaude setup        # asks: endpoint (NO trailing /v1), token (hidden), model, context, effort
-qlaude doctor       # five checks: prereqs, /v1/messages, claude, tools, info
-qlaude              # launches claude with the Setup exports + SYSTEM-PROMPT.md
-qlaude ensure-path  # optional: add qlaude to PATH in new terminals
+```
+
+That one paste installs and, in a terminal, configures: the installer
+verifies checksums, then runs the guided interview — endpoint (no trailing
+`/v1` needed; it normalizes), token (hidden input, stored `0600`), model,
+context, reasoning effort — and finishes with the five checks
+(`prereqs, /v1/messages, claude, tools, info`) that `qlaude doctor` repeats
+any time. Then plain `qlaude` opens your session — after a completed
+interview it launches directly.
+
+- The installer prints your exact PATH line for the current shell, and the
+  absolute-path command to make it permanent: `qlaude ensure-path`
+  (consent-based — rc files are touched by that command only).
+- Skipped or Ctrl-C'd the interview? Rerun the absolute path the installer
+  printed (default `~/.local/bin/qlaude setup`).
+- In scripts and CI (`CI` set, or non-tty stdin) the installer only
+  installs; configure explicitly instead — the wizard accepts every answer
+  as a flag and the token only via stdin, never argv:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomm/claude-qwen/main/install.sh | sh
+printf '%s' "$YOUR_TOKEN" | ~/.local/bin/qlaude setup -y --token-stdin \
+  --endpoint https://models.example.com --model my-model
+```
+
+  (Replace the token, path, endpoint and model; `QLAUDE_NO_SETUP=1` keeps
+  the wizard from starting even in an interactive terminal.)
+- To check what the launcher itself wired — the `qlaude` equivalent of
+  Verify step 2 — everything after `--` passes straight to Claude Code:
+
+```bash
+qlaude -- -p "Reply with exactly: OK" --max-turns 1
 ```
 
 - The installer verifies a sha256 checksum of every file it fetches
@@ -151,7 +178,7 @@ setup was broken, so old errors keep appearing.
 
 ### Installer coordinates (optional)
 
-`install.sh` reads four optional variables — a normal install sets none:
+`install.sh` reads five optional variables — a normal install sets none:
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -159,16 +186,21 @@ setup was broken, so old errors keep appearing.
 | `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a release with `QLAUDE_REF=v0.1.0` (the CI pins it to the PR commit) |
 | `QLAUDE_INSTALL_DIR` | `~/.local/bin` | Where `qlaude` lands. Must be an absolute path (a relative entry in PATH resolves against every future shell's cwd) |
 | `QLAUDE_CONFIG_DIR` | `~/.config/qlaude` | Where `config.env` (mode 0600) and `SYSTEM-PROMPT.md` live |
+| `QLAUDE_NO_SETUP` | unset | Any value keeps the installer from running the guided interview even on a terminal (a set `CI` variable does the same); it prints the resume command instead |
 
 These are installer knobs only — the launch-time variables that actually
 shape traffic are the ones in [Why each variable matters](#why-each-variable-matters).
 
 ## Verify, in this order
 
+Replace every `<angle-bracket>` placeholder before pasting — a literal
+`***` or `<your-token>` earns a bare `authentication_error` 401 that looks
+like a server bug but is the placeholder talking.
+
 ```bash
 # 1. server actually speaks the Anthropic route
 curl -X POST <your-endpoint>/v1/messages \
-  -H "Authorization: Bearer ***" \
+  -H "Authorization: Bearer <your-token>" \
   -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
   -d '{"model":"<your-model-name>","max_tokens":16,"messages":[{"role":"user","content":"say OK"}]}'
 # → expect {"content":[{"text":"OK"...}], "stop_reason":"end_turn", ...}
