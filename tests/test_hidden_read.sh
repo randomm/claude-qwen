@@ -111,6 +111,32 @@ t "a4 endpoint escape bytes never reach the terminal (preview+prompt filtered)" 
 if grep -q 'token for' "$tmp/pty.out"; then st=0; else st=1; fi
 if grep -q 'preview: keeping' "$tmp/pty.out"; then st=0; else st=1; fi
 t "  anti-vacuous: preview line (the echo surface) was captured" 0 $st
+# a4 extension (four-lens audit 2026-11-18): MODEL and CLAUDE_BIN config
+# values echoed RAW by the re-setup preview / not-found message — OSC 52
+# clipboard + title injection from a hostile config.env (same attacker class
+# the config-is-data hardening defends against; endpoint was filtered, these
+# were not).
+conf4="$tmp/conf4"
+mkdir -p "$conf4"
+printf 'appended prompt body\n' >"$conf4/SYSTEM-PROMPT.md"
+{ # SC2129: one redirect for the whole hostile-value fixture
+printf 'QLAUDE_ENDPOINT=%s\n' "$base"
+printf 'QLAUDE_MODEL=x\033]52;c;dGVzdA==\007pwned\n'
+printf 'QLAUDE_CLAUDE_BIN=%s/claude\033]0;t\007x\n' "$tmp/bin"
+printf 'QLAUDE_TOKEN=whatever\n'
+} >"$conf4/config.env"
+chmod 600 "$conf4/config.env"
+: >/dev/null
+printf '%s' "$QLAUDE_CI_TOKEN" | env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" \
+    QLAUDE_CONFIG_DIR="$conf4" QLAUDE_INSTALL_DIR="$tmp/bin" \
+    sh "$tool" setup -y --endpoint "$base" --token-stdin 2>"$tmp/a4b.err" || true
+_esc_strip "$tmp/a4b.err"
+if ! grep -q "$_esc" "$tmp/a4b.err.clean"; then st=0; else st=1; fi
+t "a4 ext: no raw ESC from MODEL/CLAUDE_BIN echoes (OSC injection blocked)" 0 $st
+if grep -q 'preview: keeping QLAUDE_MODEL' "$tmp/a4b.err.clean" \
+    && grep -q 'claude bin' "$tmp/a4b.err.clean"; then st=0; else st=1; fi
+t "  anti-vacuous: both echo surfaces really printed" 0 $st
+
 # prompt-path variant: config WITHOUT a token line forces the labelled prompt.
 conf3="$tmp/conf3"
 mkdir -p "$conf3"
