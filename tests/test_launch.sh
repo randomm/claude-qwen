@@ -297,4 +297,81 @@ t "cmd_launch execs claude on both branches" 0 $st
 if printf '%s\n' "$_body" | grep -q '_abs=$(abs_exec'; then st=0; else st=1; fi
 t "cmd_launch resolves the bin only via abs_exec" 0 $st
 
+# 18-20. #81: the first `qlaude` after install must LAUNCH, not stop after the
+# interview. cmd_launch's missing-config branch ran cmd_setup then returned its
+# exit code — a completed wizard configured but never exec'd claude, so "just
+# works" always needed a second invocation. Wizard needs a tty (C9), so this
+# runs under a pty fed with the five answers; the stand-in bin records only a
+# real launch exec (probe spawns go through -p/tool branches).
+_pty81() { # feed=$1 cmd... — pty child; answers written after settle; log to pty81.out
+    _ff=$1; shift
+    python3 -c '
+import os, pty, sys, time, select, signal
+feed = open(sys.argv[1], "rb").read()
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[2], sys.argv[2:])
+time.sleep(0.6)
+try:
+    os.write(fd, feed)
+except OSError:
+    pass
+log = b""
+t0 = time.time()
+dead = False
+while time.time() - t0 < 12 and not dead:
+    r, _, _ = select.select([fd], [], [], 0.3)
+    if r:
+        try:
+            b = os.read(fd, 4096)
+        except OSError:
+            break
+        if not b:
+            break
+        log += b
+    else:
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                dead = True
+        except ChildProcessError:
+            dead = True
+try:
+    os.kill(pid, signal.SIGKILL)
+except (ProcessLookupError, PermissionError):
+    pass
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+sys.stdout.buffer.write(log)
+sys.stdout.buffer.flush()
+' "$_ff" "$@" >"$tmp/pty81.out" 2>&1 || true
+}
+
+mkdir -p "$tmp/conf81" "$tmp/bin81"
+printf 'appended prompt body\n' >"$tmp/conf81/SYSTEM-PROMPT.md"
+cat >"$tmp/bin81/claude" <<'SHIM81'
+#!/bin/sh
+# marker ONLY on the real launch exec (cmd_launch's append-prompt branch,
+# §5.3.4); prereqs (--version) and probe (-p) spawns have other shapes.
+case "$*" in
+    *QLAUDE_TOOL_OK*) echo "QLAUDE_TOOL_OK" ;;
+    *--append-system-prompt-file*) : >"$SHIM_LAUNCHED" ;;
+    --version) echo "fake-claude 0.0.0" ;;
+    -p*) echo "OK" ;;
+esac
+SHIM81
+chmod +x "$tmp/bin81/claude"
+printf 'http://127.0.0.1:%s\n%s\nstub-model\n\nxhigh\n' \
+    "$QLAUDE_STUB_PORT" "$QLAUDE_CI_TOKEN" >"$tmp/feed81"
+_pty81 "$tmp/feed81" env -i PATH="$tmp/bin81:/usr/bin:/bin" HOME="$tmp" \
+    QLAUDE_CONFIG_DIR="$tmp/conf81" QLAUDE_STUB=1 \
+    SHIM_LAUNCHED="$tmp/launched81" sh "$tool"
+st=0; [ -f "$tmp/conf81/config.env" ] || st=1
+t "#81 anti-vacuous: the fed interview ran and saved config" 0 $st
+if [ -f "$tmp/conf81/config.env" ] && grep -q '^QLAUDE_EFFORT=xhigh$' "$tmp/conf81/config.env"; then st=0; else st=1; fi
+t "  saved config carries the fed effort (wizard really consumed answers)" 0 $st
+st=0; [ -f "$tmp/launched81" ] || st=1
+t "#81 successful auto-setup falls through: claude is exec'd on first run" 0 $st
+
 exit "$fail"

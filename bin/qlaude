@@ -500,10 +500,8 @@ token_source() { # label only — never the value (A4)
 }
 cmd_launch() {
     _cf="$QLAUDE_CONFDIR_RESOLVED/config.env"
-    if [ ! -f "$_cf" ]; then
-        # §5.3 step 1: no config → go through setup, never half-launch.
-        cmd_setup
-        return $?
+    if [ ! -f "$_cf" ]; then  # §5.3 step 1: no config → setup first, never half-launch.
+        cmd_setup || return 1  # #81: a completed interview falls through — the first run must actually launch (a 0-exit setup that wrote nothing still lands in the config_parse guard below)
     fi
     if ! config_parse "$_cf"; then
         # config_parse already printed the doctor-style fix message (§5.3.5).
