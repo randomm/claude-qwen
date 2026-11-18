@@ -34,6 +34,10 @@ export QLAUDE_STUB_PORTFILE="$portfile"
 export QLAUDE_CI_TOKEN='qlaude-ci-dummy-token-8f31'
 export QLAUDE_AUTH='bearer'
 export QLAUDE_STUB=1
+# #82: the installer may auto-run the interview under a tty; a suite run from
+# an interactive terminal must never drop into a wizard — installer tests opt
+# back in explicitly with env -u QLAUDE_NO_SETUP.
+export QLAUDE_NO_SETUP=1
 python3 "$here/stub_server.py" &
 stub_pid=$!
 

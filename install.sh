@@ -170,7 +170,18 @@ case ":$PATH:" in
         ;;
 esac
 
-if [ -t 1 ]; then
+# §5.6 'offer qlaude setup if TTY', realized as the interview itself (#82):
+# under a terminal the installer runs the existing wizard, re-attached to
+# /dev/tty — piped stdin is the drained script, so the child takes the
+# terminal instead (rustup pattern). Scripts, CI and QLAUDE_NO_SETUP keep the
+# printed next line; no branch can hang an install. The wizard is the only
+# config writer — the installer never reads the runtime QLAUDE_* bypass set.
+if [ -t 1 ] && [ -z "${CI:-}" ] && [ -z "${QLAUDE_NO_SETUP:-}" ] \
+    && : >/dev/tty 2>/dev/null; then
+    say "next: guided configuration — answer the prompts (Ctrl-C skips; resume any time: $INSTALLDIR/qlaude setup)"
+    "$INSTALLDIR/qlaude" setup </dev/tty \
+        || say "setup did not finish green — rerun when ready: $INSTALLDIR/qlaude setup"
+else
     say "next: $INSTALLDIR/qlaude setup (guided configuration)"
 fi
 exit 0
