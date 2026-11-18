@@ -91,4 +91,19 @@ t "probe mirrors launch: MAX_CONTEXT_TOKENS exported (config default)" 0 $st
 if grep -q '^CLAUDE_CODE_AUTO_MODE_SERVER=0$' "$tmp/dump"; then st=0; else st=1; fi
 t "probe mirrors launch: auto-mode opt-out default" 0 $st
 
+# audit 2026-11-18: hand-edited QLAUDE_EFFORT=high in config.env must be MAPPED
+# to xhigh by the probe too (launch maps it; the probe must not 400 into a
+# false FAIL 2 on the same enum). Second conf, second doctor run.
+conf2="$tmp/conf2"
+mkdir -p "$conf2"
+printf 'QLAUDE_ENDPOINT=%s\nQLAUDE_MODEL=stub-model\nQLAUDE_TOKEN=%s\nQLAUDE_EFFORT=high\n' "$base" "$QLAUDE_CI_TOKEN" >"$conf2/config.env"
+chmod 600 "$conf2/config.env"
+printf 'appended prompt body\n' >"$conf2/SYSTEM-PROMPT.md"
+: >"$tmp/dump2"
+env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" QLAUDE_CONFIG_DIR="$conf2" \
+    QLAUDE_STUB=1 PROBE_DUMP="$tmp/dump2" sh "$tool" doctor >/dev/null 2>&1
+if grep -q '^CLAUDE_CODE_EFFORT_LEVEL=xhigh$' "$tmp/dump2" \
+    && ! grep -q '^CLAUDE_CODE_EFFORT_LEVEL=high$' "$tmp/dump2"; then st=0; else st=1; fi
+t "probe maps hand-edited 'high' to xhigh (mirrors launch)" 0 $st
+
 exit "$fail"
