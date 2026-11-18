@@ -158,7 +158,7 @@ cmd_ensure_path() {
         err "could not write $_f — check its permissions"
         return "$EXIT_PREREQ"
     fi
-    err "PATH updated in $_f — open a new terminal to pick it up"
+    err "PATH updated in $_f — interactive bash reads ~/.bashrc, not this file; paste now: export PATH=\"$QLAUDE_INSTALLDIR_RESOLVED:\$PATH\""
 }
 usage_setup() { # wizard usage (§5.4)
     cat <<'USAGE'
