@@ -56,6 +56,11 @@ st=$?
 t "launch: exit 0 via stand-in claude" 0 $st
 if grep -qxF 'two words' "$tmp/argv" && ! grep -qxF 'two' "$tmp/argv"; then st=0; else st=1; fi
 t "launch: argument boundaries preserved (\"\$@\", not \"\$*\")" 0 $st
+# 1b. The '--' separator belongs to qlaude's dispatch, not claude's argv
+# (owner 2026-11-19: claude flags must pass through; a literal '--' makes
+# commander treat -p as a positional word — the documented -- -p form died).
+if grep -qxF -- '--' "$tmp/argv"; then st=1; else st=0; fi
+t "launch: literal '--' is not forwarded to claude" 0 $st
 
 # 2. The append flag reaches claude verbatim with the CONFDIR prompt file.
 if grep -qxF -- '--append-system-prompt-file' "$tmp/argv" && \
@@ -218,6 +223,19 @@ if grep -qxF 'launch' "$tmp/argv4"; then st=1; else st=0; fi
 t "launch verb stripped before claude argv" 0 $st
 if grep -qxF -- '--resume' "$tmp/argv4" && grep -qxF 'foo' "$tmp/argv4"; then st=0; else st=1; fi
 t "launch passes user args through" 0 $st
+
+# 12b. claude flags must pass through directly too (owner 2026-11-19):
+# qlaude -c / --resume / -p behave like claude, not "unknown command".
+for _fl in '-c' '--resume' '-p'; do
+    rm -f "$tmp/argv5"
+    env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp" QLAUDE_CONFIG_DIR="$conf" \
+        QLAUDE_INSTALL_DIR="$tmp/bin" SHIM_ARGV="$tmp/argv5" SHIM_ENV="$tmp/env5" \
+        sh "$tool" "$_fl" some >/dev/null 2>&1
+    if grep -qxF -- "$_fl" "$tmp/argv5" && grep -qxF 'some' "$tmp/argv5"; then st=0; else st=1; fi
+    t "flag passthrough: $_fl reaches claude verbatim" 0 $st
+    if grep -qxF 'qlaude' "$tmp/argv5"; then st=1; else st=0; fi
+    t "flag passthrough: no dispatch word leaks for $_fl" 0 $st
+done
 
 # 13. Token ladder order is spec-mandated (keychain first on macOS): the
 # Darwin keychain branch must precede the file/env branch in the source.
