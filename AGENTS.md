@@ -20,7 +20,7 @@ claim here is wrong by construction.
 
 ## 0. Prime directive
 
-The README's verified claims **are** the product. Every claim about how Claude
+The verified claims (README summary, `docs/status.md` detail) **are** the product. Every claim about how Claude
 Code or vLLM behaves was verified against a live upstream and is kept
 verifiable, or it is removed. When truth and a claim conflict, delete the
 claim — never defend it. Second law: qlaude must never become the thing people
@@ -38,8 +38,8 @@ verification, not discovery.**
   suites; the whole chain also re-runs under `dash -c` in a clean HOME — A3).
 - Checksum current: regenerated `install.sha256` (via `tools/gen-checksum.sh`)
   matches the committed one — CI's checksum-drift step is a gate, not trivia.
-- Mechanical export check: launcher exported-var list ⊆ README env table first
-  column (A6, grep).
+- Mechanical export check: launcher exported-var list ⊆ docs/environment.md
+  table first column (A6, grep).
 - Hygiene grep clean over the repo **and git history** (§18) before any push
   to the public remote.
 
@@ -81,10 +81,10 @@ gauntlet, or any README claim about the wire.
   gauntlet's step-1 `/v1` hint exists because of this.
 - **Unrecognized model IDs get an assumed context window** (recent builds:
   1M), never the server's real one — compaction then fires at the wrong
-  threshold. The README context-window guidance is canonical; keep it true.
+  threshold. The context-window guidance in docs/how-it-works.md is canonical; keep it true.
 - **Bearer is the only wizard path.** `ANTHROPIC_API_KEY` against vLLM starts
   Anthropic account-login and fails without an account; the api-key style is
-  env-only with a warning. Exported names follow the README table (A6).
+  env-only with a warning. Exported names follow the docs/environment.md table (A6).
 - **The token never appears in argv, logs, or printed output.** macOS keychain
   writes pipe it on stdin (`security … -w` with stdin, never `-w <token>`);
   qlaude-issued auth calls use `curl -K -` with the header in the stdin
@@ -120,7 +120,7 @@ Permanent anti-goals — re-proposing any of them is a review rejection:
 - No multi-endpoint profiles (`qlaude use <name>`) in v1.
 - No `qlaude update` subcommand (§4).
 - **Never become the thing people must debug:** `QLAUDE_*` overrides and plain
-  `claude` with the README table must always bypass qlaude. Any feature that
+  `claude` with the docs/environment.md table must always bypass qlaude. Any feature that
   can block a power user is a defect.
 
 ## 6. Repo layout & change surfaces
@@ -133,7 +133,7 @@ Permanent anti-goals — re-proposing any of them is a review rejection:
 | `tools/` | dev-side helpers (`gen-checksum.sh`, …) — not user-facing |
 | `tests/` | `run_tests.sh` entry point + auth-enforcing `stub_server.py` |
 | `.github/workflows/ci.yml` | the gates, mirrored; holds the version pins |
-| `README.md` | public ground truth; its env table is canonical for exports |
+| `README.md` | public entry point: what it is + quickstart, nothing else canonical |
 | `SYSTEM-PROMPT.md` | append-only behavior addendum (I6) |
 | `docs/superpowers/specs/` `plans/` | design authority (read-only for agents; new spec revision = new file) |
 
@@ -239,8 +239,8 @@ verified-claim is a bug with a severity, not housekeeping.
 - **The 200-PR test:** before writing a doc, ask whether it will still be true
   after 200 PRs. Will not ⇒ it belongs in a code comment or the issue
   tracker, not a file.
-- Document *why*; let *what/how* die as code. README is the verified-claim
-  surface; the README env table is canonical for exported variables (A6
+- Document *why*; let *what/how* die as code. docs/status.md is the verified-claim
+  surface; docs/environment.md is canonical for exported variables (A6
   enforces the link).
 - Placement: root UPPERCASE files for agent/product contracts (`README.md`,
   `AGENTS.md`, `SYSTEM-PROMPT.md`); `docs/` lowercase-hyphen for design.
@@ -320,7 +320,8 @@ orientation table.
 
 ## 21. Cross-references
 
-- `README.md` — verified-claim surface; env table canonical.
+- `README.md` — entry point (what + quickstart); `docs/environment.md` —
+  canonical env table; `docs/status.md` — verified-claim surface.
 - Newest `docs/superpowers/specs/qlaude-design*` + aligned plan — design
   authority, acceptance criteria A1–A7.
 - `SYSTEM-PROMPT.md` header comment — usage of the append-only addendum.

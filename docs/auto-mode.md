@@ -1,7 +1,7 @@
 # Auto mode and the safety classifier
 
 [← Back to the README](../README.md) · variable table:
-[Why each variable matters](../README.md#why-each-variable-matters)
+[Why each variable matters](environment.md#why-each-variable-matters)
 
 Auto mode runs a safety classifier over actions (shell commands, network
 calls) before they execute. Anthropic can also run those checks server-side
@@ -29,8 +29,8 @@ qlaude default export suppresses it (CI-enforced differential).
 That is why the two classifier pins matter —
 `CLAUDE_CODE_AUTO_MODE_MODEL` and `CLAUDE_CODE_BG_CLASSIFIER_MODEL`, both
 already in the README's
-[Setup block](../README.md#setup) and explained in
-[Why each variable matters](../README.md#why-each-variable-matters):
+[Setup block](environment.md#manual-setup-the-exports-the-launcher-builds-for-you) and explained in
+[Why each variable matters](environment.md#why-each-variable-matters):
 with them set, auto mode's decisions are served by your custom model,
 resolving through the same model config as the main loop (verified
 November 2026, auto-approved actions).

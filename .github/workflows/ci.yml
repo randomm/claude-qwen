@@ -22,15 +22,15 @@ jobs:
           for f in tests/test_*.sh tests/run_tests.sh; do dash -n "$f"; done
       - name: checksum drift (install.sha256 must match the payload)
         run: sh tools/gen-checksum.sh --check
-      - name: A6 — launcher exports, contract constant and README must agree
+      - name: A6 — launcher exports, contract constant and environment doc must agree
         # Spec §7 A6 extracts from the launcher's export STATEMENTS; T8
         # review round 2 showed checking only the QLAUDE_EXPORTS constant
         # leaves both drift directions unguarded. So: every constant name
-        # must (a) appear in README and (b) still be exported by
+        # must (a) appear in docs/environment.md and (b) still be exported by
         # cmd_launch; every name cmd_launch exports must be in the
         # constant, except the whitelist — the auth-mode branch
         # (ANTHROPIC_API_KEY) and the kill-switch check
-        # (CLAUDE_CODE_AUTO_MODE_SERVER), both README-documented and not
+        # (CLAUDE_CODE_AUTO_MODE_SERVER), both documented in the env doc and not
         # part of the 10-export contract.
         run: |
           _names=$(sed -n "s/^QLAUDE_EXPORTS='\(.*\)'$/\1/p" bin/qlaude)
@@ -39,8 +39,8 @@ jobs:
             | grep -oE '(ANTHROPIC|CLAUDE_CODE)_[A-Z_]+' | sort -u)
           _missing=0
           for _n in $_names; do
-            grep -q -- "$_n" README.md || {
-              echo "A6: launcher exports $_n but README does not document it" >&2
+            grep -q -- "$_n" docs/environment.md || {
+              echo "A6: launcher exports $_n but docs/environment.md does not document it" >&2
               _missing=1; }
             printf '%s\n' "$_launch" | grep -qx -- "$_n" || {
               echo "A6: constant lists $_n but cmd_launch no longer exports it" >&2
