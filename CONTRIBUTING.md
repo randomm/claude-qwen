@@ -21,22 +21,27 @@ Every shipped script is strict POSIX `sh`: no `[[ ]]`, no arrays, no
 `source`, no `echo -e`, no `read -n`. Tests never touch the network — they
 run against `tests/stub_server.py`; never point a test at a live endpoint.
 
-## The README is the product
+## The README is the product — keep it short
 
-`README.md` is the project's single source of truth for user-facing facts,
-and specifically the single source for the variable table — never restate
-that table anywhere else; link to it. CI enforces the details
-(`tests/test_docs_coords.sh` plus the A6 check in `.github/workflows/ci.yml`):
+`README.md` is the entry point: what this is and how to start. Reference
+material lives in `docs/`, and `docs/environment.md` is the single source
+for the variable table — never restate that table anywhere else; link to
+it. CI enforces the details (`tests/test_docs_coords.sh` plus the A6 check
+in `.github/workflows/ci.yml`):
 
-- every launcher export name must appear in the README;
-- the launch-variable table must exist exactly once;
+- every launcher export name must appear in `docs/environment.md`;
+- the launch-variable table must exist exactly once, in `docs/environment.md`,
+  and must NOT appear in the README;
 - the installer-coordinates section may not duplicate launch variables;
-- documented flows (`token-stdin`, `QLAUDE_NO_SETUP`, `qlaude -- -p`, the
-  installer coordinates) must stay documented.
+- documented flows (`token-stdin`, `qlaude -- -p`, in the README;
+  `QLAUDE_NO_SETUP`, the installer coordinates, in the environment doc)
+  must stay documented;
+- the README must carry the reassurance that users set no environment
+  variables by hand.
 
-If you change behavior that the README describes, update the README in the
-same commit. If a doc pin must move, move it deliberately in the same
-commit and say so.
+If you change behavior that the README or docs describe, update the same
+page in the same commit. If a doc pin must move, move it deliberately in
+the same commit and say so.
 
 ## Style
 
