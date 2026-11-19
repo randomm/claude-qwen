@@ -577,13 +577,14 @@ main() {
     case $_cmd in
         '') cmd_launch "$@" ;;
         launch) shift; cmd_launch "$@" ;;
-        --) cmd_launch "$@" ;;
+        --) shift; cmd_launch "$@" ;;
         setup) shift; cmd_setup "$@" ;;
         doctor) cmd_doctor ;;
         config) cmd_config ;;
         ensure-path) shift; cmd_ensure_path "$@" ;;
         --version | -V) printf 'qlaude %s\n' "$QLAUDE_VERSION" ;;
         --help | -h | help) usage ;;
+        -*) cmd_launch "$@" ;;
         *)
             err "unknown command '$_cmd'"
             usage >&2
