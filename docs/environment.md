@@ -59,7 +59,7 @@ setup was broken, so old errors keep appearing.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/randomm/qlaude` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
+| `QLAUDE_BASE_URL` | `https://raw.githubusercontent.com/trail-openers/qlaude` | Fetch root. `http` is accepted **only** for `127.0.0.1`/`localhost` (the offline test suite) and such fetches never follow redirects; every other non-HTTPS source is refused |
 | `QLAUDE_REF` | `main` | The path segment appended to the base URL. Pin a known-good version with `QLAUDE_REF=<40-char-commit-sha>` (no releases are tagged yet; CI pins it to the pull-request commit) |
 | `QLAUDE_INSTALL_DIR` | `~/.local/bin` | Where `qlaude` lands. Must be an absolute path. A relative entry resolves against each future shell's working directory, which is why it must be absolute |
 | `QLAUDE_CONFIG_DIR` | `~/.config/qlaude` | Where `config.env` (mode 0600) and `SYSTEM-PROMPT.md` live |

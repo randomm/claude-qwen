@@ -1,6 +1,6 @@
 # qlaude — Claude Code against your own model server
 
-[![CI](https://github.com/randomm/qlaude/actions/workflows/ci.yml/badge.svg)](https://github.com/randomm/qlaude/actions/workflows/ci.yml)
+[![CI](https://github.com/trail-openers/qlaude/actions/workflows/ci.yml/badge.svg)](https://github.com/trail-openers/qlaude/actions/workflows/ci.yml)
 [![Apache-2.0 licensed](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Run [Claude Code](https://code.claude.com), Anthropic's terminal coding
@@ -40,7 +40,7 @@ readable only by your user), runs the self-checks below as
 you.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/trail-openers/qlaude/main/install.sh | sh
 ```
 
 That paste installs `~/.local/bin/qlaude` plus
@@ -70,8 +70,8 @@ The interview ends with the five checks below. A successful run looks
 like this (output sketch — your server URL and model names will differ):
 
 ```text
-$ curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
-qlaude install: fetching from https://raw.githubusercontent.com/randomm/qlaude/main
+$ curl -fsSL https://raw.githubusercontent.com/trail-openers/qlaude/main/install.sh | sh
+qlaude install: fetching from https://raw.githubusercontent.com/trail-openers/qlaude/main
 qlaude install: checksums verified (truncation/corruption guard; supply chain = TLS + the host)
 qlaude install: installed ~/.local/bin/qlaude
 qlaude install: PATH note: ~/.local/bin is not on PATH — copy-paste now: export PATH="$HOME/.local/bin:$PATH" (then: ~/.local/bin/qlaude ensure-path)
@@ -110,7 +110,7 @@ feeding the token over stdin — never as an argument (in CI, from your
 secret store, not shell history):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/randomm/qlaude/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/trail-openers/qlaude/main/install.sh | sh
 printf '%s' "$YOUR_TOKEN" | ~/.local/bin/qlaude setup -y --token-stdin \
   --endpoint https://models.example.com --model my-model
 ```
@@ -165,7 +165,7 @@ Run `qlaude doctor` first — it names the failing check. Then:
 
 ## Getting help
 
-- Questions and bugs: [open an issue](https://github.com/randomm/qlaude/issues) —
+- Questions and bugs: [open an issue](https://github.com/trail-openers/qlaude/issues) —
   include what you ran, what came back, your OS, and which commit you
   installed from (your `QLAUDE_REF` value; if you left it on `main`, the
   install date helps too — the installer fetches single files, so there is
