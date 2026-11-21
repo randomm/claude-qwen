@@ -26,7 +26,7 @@ EXIT_PREREQ=2
 EXIT_TOOL=5
 
 # --- coordinates (spec §5.6): CI pins REF to the PR commit; users pin tags.
-QLAUDE_BASE_URL=${QLAUDE_BASE_URL:-https://raw.githubusercontent.com/randomm/qlaude}
+QLAUDE_BASE_URL=${QLAUDE_BASE_URL:-https://raw.githubusercontent.com/trail-openers/qlaude}
 QLAUDE_REF=${QLAUDE_REF:-main}
 INSTALLDIR=${QLAUDE_INSTALL_DIR:-$HOME/.local/bin}
 # audit a10: a relative install dir lands in PATH as a relative entry — every

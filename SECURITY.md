@@ -3,7 +3,7 @@
 ## How to report
 
 Please do **not** open a public issue. Report vulnerabilities privately via
-[GitHub private vulnerability reporting](https://github.com/randomm/qlaude/security/advisories/new)
+[GitHub private vulnerability reporting](https://github.com/trail-openers/qlaude/security/advisories/new)
 (Security tab → *Report a vulnerability*). This project is maintained by one
 person on a best-effort basis — no response-time SLA is promised, but
 reports are read and acknowledged as promptly as life allows.
@@ -17,7 +17,7 @@ output with tokens and private hostnames removed.
 The one-paste installer fetches **two payloads plus a same-origin
 manifest** — `bin/qlaude` and `SYSTEM-PROMPT.md`, verified against
 `install.sha256` — from one HTTPS origin (default
-`https://raw.githubusercontent.com/randomm/qlaude`, overridable via
+`https://raw.githubusercontent.com/trail-openers/qlaude`, overridable via
 `QLAUDE_BASE_URL`), and executes only `bin/qlaude`. The manifest arrives
 over the same HTTPS channel as the payloads: this is drift and corruption
 protection, **not** first-run authentication — the supply chain is TLS plus

@@ -99,4 +99,37 @@ for _d in docs/auto-mode.md docs/gateways.md docs/behavior-prompt.md \
 done
 t "every relative markdown link in README + docs resolves" 0 "$_dead"
 
+# repo-transfer (2026-11-19): the repo moved to trail-openers. GitHub
+# transfer redirects die the moment the old name is recreated — and a
+# squatter there could serve install.sh + a matching install.sha256
+# (same-base, truncation-guard only). So no product-facing file may keep
+# the retired owner, and the four surfaces that state the fetch default
+# must not be able to drift apart. The retired word is built at runtime
+# so this file never matches its own scan.
+_retired=$(printf 'ran%s' 'domm')
+_drift=0
+for _f in install.sh bin/qlaude README.md SECURITY.md .github/workflows/ci.yml \
+    docs/README.md docs/environment.md docs/status.md docs/troubleshooting.md \
+    docs/verify.md docs/prerequisites.md docs/how-it-works.md docs/gateways.md \
+    docs/behavior-prompt.md docs/auto-mode.md docs/server-checklist.md; do
+    if grep -qi -- "$_retired" "$root/$_f"; then
+        echo "  retired owner literal in $_f"; _drift=1
+    fi
+done
+t "no product-facing file names the retired repo owner" 0 "$_drift"
+# ci.yml must derive the install fetch origin from the repo context —
+# owner-literal-free forever, inert across future renames/transfers.
+if grep -q 'github.repository' "$root/.github/workflows/ci.yml"; then st=0; else st=1; fi
+t "  ci.yml derives the fetch origin from the repo context" 0 $st
+
+_def=$(sed -n 's|.*QLAUDE_BASE_URL:-\(http[^}]*\)}*|\1|p' "$root/install.sh" | head -n 1)
+if [ -n "$_def" ] && grep -qF -- "$_def" "$canon" \
+    && grep -qF -- "$_def/main/install.sh" "$readme" \
+    && grep -qF -- "fetching from $_def/main" "$readme"; then
+    st=0
+else
+    st=1
+fi
+t "install default, env-doc default and README one-liner+sketch agree" 0 $st
+
 exit "$fail"
